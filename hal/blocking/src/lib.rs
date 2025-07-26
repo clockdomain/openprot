@@ -9,6 +9,9 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+/// Reset and Clock Control
+pub mod system_control;
+
 // Re-export embedded-hal 1.0 traits
 pub use embedded_hal::delay::DelayNs;
 pub use embedded_hal::digital::{InputPin, OutputPin, StatefulOutputPin};
