@@ -1,0 +1,11 @@
+# Licensed under the Apache-2.0 license
+
+[package]
+name = "openprot-mctp-client"
+version = "0.1.0"
+edition = "2021"
+description = "MCTP IPC client for OpenPRoT (Pigweed userspace)"
+license = "Apache-2.0"
+
+[dependencies]
+openprot-mctp-api = { path = "../api" }

@@ -14,6 +14,10 @@ members = [
     "platform/impls/hubris",
     "platform/impls/rustcrypto",
     "services/i2c/api",
+    "services/mctp/api",
+    "services/mctp/server",
+    "services/mctp/transport-i2c",
+    "services/mctp/client",
     "services/telemetry",
     "services/storage",
 ]
