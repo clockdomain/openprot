@@ -10,7 +10,7 @@
 
 use heapless::LinearMap;
 use mctp::{Eid, MsgIC, MsgType, Tag, TagValue};
-use mctp_stack::{AppCookie, Router, Sender};
+use mctp_lib::{AppCookie, Router, Sender};
 use openprot_mctp_api::{Handle, MctpError, RecvMetadata, ResponseCode};
 
 /// Maximum payload size in bytes.

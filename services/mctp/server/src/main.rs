@@ -120,10 +120,10 @@ fn mctp_server_loop() -> Result<()> {
 /// the I2C transport is wired up.
 struct NoopSender;
 
-impl mctp_stack::Sender for NoopSender {
+impl mctp_lib::Sender for NoopSender {
     fn send_vectored(
         &mut self,
-        _fragmenter: mctp_stack::fragment::Fragmenter,
+        _fragmenter: mctp_lib::fragment::Fragmenter,
         _payload: &[&[u8]],
     ) -> mctp::Result<mctp::Tag> {
         Err(mctp::Error::TxFailure)

@@ -5,8 +5,8 @@
 // 768KB SRAM (640KB usable), executes from RAM
 //
 // Memory Layout (PMSAv7-friendly, power-of-2 aligned regions):
-//   0x00000000 - 0x000004A0: Vector table + kernel annotations (1184 bytes)
-//   0x000004A0 - 0x00020000: Kernel code (~126KB)
+//   0x00000000 - 0x00000500: Vector table + kernel annotations (1280 bytes)
+//   0x00000500 - 0x00020000: Kernel code (~126KB)
 //   0x00020000 - 0x00080000: App flash (384KB: 3 apps × 128KB)
 //   0x00080000 - 0x000B0000: App RAM (192KB: 3 apps × 64KB)
 //   0x000B0000 - 0x000C0000: Kernel RAM (64KB)
@@ -16,11 +16,11 @@
     arch: {
         type: "armv7m",
         vector_table_start_address: 0x00000000,
-        vector_table_size_bytes: 1184,  // 0x4A0 (272 vectors + thread/stack annotations)
+        vector_table_size_bytes: 1280,  // 0x500 (272 vectors + thread/stack annotations)
     },
     kernel: {
-        flash_start_address: 0x000004A0,  // After vector table + annotations
-        flash_size_bytes: 129888,         // ~126KB (ends at 0x00020000, power-of-2 boundary)
+        flash_start_address: 0x00000500,  // After vector table + annotations
+        flash_size_bytes: 130816,         // ~127KB (ends at 0x00020000, power-of-2 boundary)
         ram_start_address: 0x000B0000,    // After all app RAM
         ram_size_bytes: 65536,            // 64KB
     },

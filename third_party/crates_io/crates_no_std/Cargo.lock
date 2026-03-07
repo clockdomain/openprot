@@ -40,7 +40,7 @@ dependencies = [
 [[package]]
 name = "aspeed-ddk"
 version = "0.1.0"
-source = "git+https://github.com/OpenPRoT/aspeed-rust.git?branch=i2c-core#a1cd0aa834446d20c4ab841fd02f0045c42f4480"
+source = "git+https://github.com/OpenPRoT/aspeed-rust.git?branch=i2c-core#e93e85b0fff8a448a86c6a81bbbf1818ea6094e6"
 dependencies = [
  "ast1060-pac 0.1.0 (git+https://github.com/OpenPRoT/ast1060-pac.git?branch=main)",
  "bitflags",
@@ -220,12 +220,35 @@ dependencies = [
  "ecdsa",
  "embedded-hal 1.0.0",
  "embedded-io",
+ "fugit",
+ "heapless",
+ "hex-literal",
  "hmac",
+ "mctp",
+ "mctp-lib",
+ "nb 1.1.0",
+ "openprot-hal-blocking",
  "p256",
  "p384",
+ "proposed-traits",
  "sha2",
  "zerocopy",
 ]
+
+[[package]]
+name = "crc"
+version = "3.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5eb8a2a1cd12ab0d987a5d5e825195d372001a4094a0376319d5a0ad71c1ba0d"
+dependencies = [
+ "crc-catalog",
+]
+
+[[package]]
+name = "crc-catalog"
+version = "2.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19d374276b40fb8bbdee95aef7c7fa6b5316ec764510eb64b8dd0e2ed0d7e7f5"
 
 [[package]]
 name = "crypto-bigint"
@@ -312,6 +335,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-crc-macros"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4f1c75747a43b086df1a87fb2a889590bc0725e0abf54bba6d0c4bf7bd9e762c"
+
+[[package]]
 name = "embedded-hal"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -340,6 +369,15 @@ name = "embedded-io"
 version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "edd0f118536f44f5ccd48bcb8b111bdc3de888b58c74639dfb034a357d0f206d"
+
+[[package]]
+name = "embedded-io-async"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ff09972d4073aa8c299395be75161d582e7629cd663171d62af73c8d50dba3f"
+dependencies = [
+ "embedded-io",
+]
 
 [[package]]
 name = "embedded-storage"
@@ -454,6 +492,41 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6800badb6cb2082ffd7b6a67e6125bb39f18782f793520caee8cb8846be06112"
 
 [[package]]
+name = "log"
+version = "0.4.29"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
+
+[[package]]
+name = "mctp"
+version = "0.2.0"
+source = "git+https://github.com/OpenPRoT/mctp-rs.git?branch=sync-features#fafe92f6fcadf6e57683b91757fad9933ddd223d"
+
+[[package]]
+name = "mctp-estack"
+version = "0.1.0"
+source = "git+https://github.com/OpenPRoT/mctp-rs.git?branch=sync-features#fafe92f6fcadf6e57683b91757fad9933ddd223d"
+dependencies = [
+ "crc",
+ "embedded-io",
+ "embedded-io-async",
+ "heapless",
+ "log",
+ "mctp",
+ "smbus-pec",
+ "uuid",
+]
+
+[[package]]
+name = "mctp-lib"
+version = "0.1.0"
+source = "git+https://github.com/9elements/mctp-lib.git?branch=buildup#9c53adaeb7ae544cbeab4654530a50d158e33fe5"
+dependencies = [
+ "mctp",
+ "mctp-estack",
+]
+
+[[package]]
 name = "nb"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -477,7 +550,7 @@ checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 [[package]]
 name = "openprot-hal-blocking"
 version = "0.1.0"
-source = "git+https://github.com/OpenPRoT/openprot#b2081ffd8d0fbcb1f8f6a4a458e044ce949d2e1e"
+source = "git+https://github.com/rusty1968/openprot.git?rev=c6cd23a#c6cd23a56f3cc7945b062ea1bcdabf3af0dba82d"
 dependencies = [
  "embedded-hal 1.0.0",
  "rand_core 0.9.5",
@@ -566,9 +639,9 @@ dependencies = [
 
 [[package]]
 name = "quote"
-version = "1.0.44"
+version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "21b2ebcf727b7760c461f091f9f0f539b77b8e87f2fd88131e7f1b433b3cece4"
+checksum = "41f2619966050689382d2b44f664f4bc593e129785a36d6ee376ddf37259b924"
 dependencies = [
  "proc-macro2",
 ]
@@ -654,6 +727,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "smbus-pec"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca0763a680cd5d72b28f7bfc8a054c117d8841380a6ad4f72f05bd2a34217d3e"
+dependencies = [
+ "embedded-crc-macros",
+]
+
+[[package]]
 name = "stable_deref_trait"
 version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -667,9 +749,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"
-version = "2.0.115"
+version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e614ed320ac28113fa64972c4262d5dbc89deacdfd00c34a3e4cea073243c12"
+checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -684,9 +766,9 @@ checksum = "562d481066bde0658276a35467c4af00bdc6ee726305698a55b86e61d7ad82bb"
 
 [[package]]
 name = "unicode-ident"
-version = "1.0.23"
+version = "1.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "537dd038a89878be9b64dd4bd1b260315c1bb94f4d784956b81e27a088d9a09e"
+checksum = "e6e4313cd5fcd3dad5cafa179702e2b244f760991f45397d14d4ebf38247da75"
 
 [[package]]
 name = "universal-hash"
@@ -697,6 +779,12 @@ dependencies = [
  "crypto-common",
  "subtle",
 ]
+
+[[package]]
+name = "uuid"
+version = "1.22.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a68d3c8f01c0cfa54a75291d83601161799e4a89a39e0929f4b0354d88757a37"
 
 [[package]]
 name = "vcell"
@@ -727,18 +815,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.39"
+version = "0.8.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "db6d35d663eadb6c932438e763b262fe1a70987f9ae936e60158176d710cae4a"
+checksum = "a789c6e490b576db9f7e6b6d661bcc9799f7c0ac8352f56ea20193b2681532e5"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.39"
+version = "0.8.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4122cd3169e94605190e77839c9a40d40ed048d305bfdc146e7df40ab0f3e517"
+checksum = "f65c489a7071a749c849713807783f70672b28094011623e200cb86dcb835953"
 dependencies = [
  "proc-macro2",
  "quote",

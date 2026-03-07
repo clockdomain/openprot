@@ -6,15 +6,15 @@
 //! that can be fed to `Server::inbound()`.
 //!
 //! This corresponds to the `handle_i2c_transport` function in Hubris
-//! `mctp-server/src/main.rs`, using `mctp_stack::i2c::MctpI2cEncap`
+//! `mctp-server/src/main.rs`, using `mctp_lib::i2c::MctpI2cEncap`
 //! for decoding (same as Hubris).
 
-use mctp_stack::i2c::MctpI2cEncap;
+use mctp_lib::i2c::MctpI2cEncap;
 use openprot_i2c_api::TargetMessage;
 
 /// Decodes I2C target messages into raw MCTP packets.
 ///
-/// Wraps the `mctp_stack::i2c::MctpI2cEncap` decoder. One instance
+/// Wraps the `mctp_lib::i2c::MctpI2cEncap` decoder. One instance
 /// should exist per I2C bus carrying MCTP traffic.
 pub struct MctpI2cReceiver {
     encap: MctpI2cEncap,

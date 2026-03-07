@@ -31,6 +31,18 @@ ctr = { version = "0.9", default-features = false }
 cipher = { version = "0.4", default-features = false }
 zerocopy = { version = "0.8", default-features = false, features = ["derive"] }
 
+# aspeed-ddk transitive deps needed as explicit Bazel targets
+heapless = "0.8.0"
+hex-literal = "0.4"
+nb = "1.1.0"
+fugit = "0.3.7"
+openprot-hal-blocking = { git = "https://github.com/rusty1968/openprot.git", rev = "c6cd23a" }
+proposed-traits = { git = "https://github.com/rusty1968/proposed_traits.git", package = "proposed-traits", rev = "85641310df5a5276c67f81621b104322cff0286c" }
+
+# MCTP crates
+mctp = { git = "https://github.com/OpenPRoT/mctp-rs.git", branch = "sync-features", default-features = false }
+mctp-lib = { git = "https://github.com/9elements/mctp-lib.git", branch = "buildup" }
+
 # ECDSA crates
 ecdsa = { version = "0.16", default-features = false, features = ["signing", "verifying"] }
 p256 = { version = "0.13", default-features = false, features = ["ecdsa"] }
@@ -40,3 +52,6 @@ p384 = { version = "0.13", default-features = false, features = ["ecdsa"] }
 
 [patch."https://github.com/AspeedTech-BMC/ast1060-pac.git"]
 ast1060-pac = { git = "https://github.com/stevenlee7189/ast1060-pac", branch = "main" }
+
+[patch."https://github.com/OpenPRoT/openprot"]
+openprot-hal-blocking = { git = "https://github.com/rusty1968/openprot.git", rev = "c6cd23a" }

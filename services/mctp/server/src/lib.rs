@@ -5,14 +5,14 @@
 //! Platform-independent MCTP server implementation for OpenPRoT.
 //!
 //! This crate provides the core MCTP server logic that manages:
-//! - Listener and request handle allocation (via `mctp-lib` [`Router`](mctp_stack::Router))
+//! - Listener and request handle allocation (via `mctp-lib` [`Router`](mctp_lib::Router))
 //! - Inbound message routing to registered listeners
 //! - Outbound message fragmentation and sending
 //! - Timeout management for pending receive calls
 //!
 //! ## Transport Bindings
 //!
-//! The server is generic over the `mctp-lib` [`Sender`](mctp_stack::Sender) trait
+//! The server is generic over the `mctp-lib` [`Sender`](mctp_lib::Sender) trait
 //! for outbound transport. Transport-specific bindings (I2C, serial) implement
 //! this trait and feed inbound packets via [`Server::inbound`].
 //!
@@ -30,5 +30,5 @@
 pub mod dispatch;
 mod server;
 
-pub use mctp_stack::Sender;
+pub use mctp_lib::Sender;
 pub use server::{RecvResult, Server, ServerConfig};

@@ -10,8 +10,8 @@
 use std::cell::RefCell;
 
 use mctp::{Eid, Tag};
-use mctp_stack::fragment::{Fragmenter, SendOutput};
-use mctp_stack::Sender;
+use mctp_lib::fragment::{Fragmenter, SendOutput};
+use mctp_lib::Sender;
 use openprot_mctp_api::wire;
 use openprot_mctp_server::{dispatch::dispatch_mctp_op, Server};
 

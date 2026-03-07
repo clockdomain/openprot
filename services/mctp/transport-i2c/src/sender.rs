@@ -7,12 +7,12 @@
 //! `openprot_i2c_api::I2cClientBlocking`.
 
 use mctp::Result;
-use mctp_stack::i2c::{MctpI2cEncap, MCTP_I2C_MAXMTU};
+use mctp_lib::i2c::{MctpI2cEncap, MCTP_I2C_MAXMTU};
 use openprot_i2c_api::{BusIndex, I2cAddress, I2cClientBlocking};
 
 /// I2C MCTP sender.
 ///
-/// Implements `mctp_stack::Sender` to fragment and send MCTP packets
+/// Implements `mctp_lib::Sender` to fragment and send MCTP packets
 /// over I2C using the OpenPRoT I2C client API.
 ///
 /// This is a direct port of the Hubris `I2cSender`. The fragmentation
@@ -43,10 +43,10 @@ impl<C: I2cClientBlocking> I2cSender<C> {
     }
 }
 
-impl<C: I2cClientBlocking> mctp_stack::Sender for I2cSender<C> {
+impl<C: I2cClientBlocking> mctp_lib::Sender for I2cSender<C> {
     fn send_vectored(
         &mut self,
-        mut fragmenter: mctp_stack::fragment::Fragmenter,
+        mut fragmenter: mctp_lib::fragment::Fragmenter,
         payload: &[&[u8]],
     ) -> Result<mctp::Tag> {
         // TODO The stack needs to provide the destination EID to the sender
@@ -59,21 +59,21 @@ impl<C: I2cClientBlocking> mctp_stack::Sender for I2cSender<C> {
         let encoder = MctpI2cEncap::new(self.own_addr);
 
         loop {
-            let mut pkt = [0u8; mctp_stack::serial::MTU_MAX];
+            let mut pkt = [0u8; mctp_lib::serial::MTU_MAX];
             let r = fragmenter.fragment_vectored(payload, &mut pkt);
 
             match r {
-                mctp_stack::fragment::SendOutput::Packet(p) => {
+                mctp_lib::fragment::SendOutput::Packet(p) => {
                     let mut out = [0; MCTP_I2C_MAXMTU + 8]; // max MTU + I2C header size
                     let _packet = encoder.encode(addr, p, &mut out, true)?;
                     self.i2c
                         .write(self.bus, dest_address, &out)
                         .map_err(|_| mctp::Error::TxFailure)?;
                 }
-                mctp_stack::fragment::SendOutput::Complete { tag, .. } => {
+                mctp_lib::fragment::SendOutput::Complete { tag, .. } => {
                     break Ok(tag);
                 }
-                mctp_stack::fragment::SendOutput::Error { err, .. } => {
+                mctp_lib::fragment::SendOutput::Error { err, .. } => {
                     break Err(err);
                 }
             }

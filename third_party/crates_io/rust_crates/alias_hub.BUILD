@@ -46,6 +46,18 @@ alias(
 )
 
 alias(
+    name = "mctp",
+    actual = "@oot_crates_no_std//:mctp",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "mctp-lib",
+    actual = "@oot_crates_no_std//:mctp-lib",
+    visibility = ["//visibility:public"],
+)
+
+alias(
     name = "heapless",
     actual = "@oot_crates_no_std//:heapless",
     visibility = ["//visibility:public"],
