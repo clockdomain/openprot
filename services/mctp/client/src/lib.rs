@@ -85,19 +85,25 @@ impl IpcMctpClient {
         Ok((header, resp_len))
     }
 
-    /// Platform-specific send/receive.
+    /// Platform-specific send/receive via Pigweed IPC.
     ///
-    /// In a Pigweed build, this calls `syscall::channel_transact`.
-    /// For now, this is a stub that returns an error.
+    /// Uses `syscall::channel_transact` when built under Pigweed (Bazel).
+    /// Returns a stub error when built under Cargo (no `userspace` crate).
+    #[cfg(feature = "pigweed")]
+    fn send_recv(&self, req_len: usize) -> Result<usize, MctpError> {
+        let mut inner = self.inner.borrow_mut();
+        userspace::syscall::channel_transact(
+            self.handle,
+            &inner.request_buf[..req_len],
+            &mut inner.response_buf,
+            userspace::time::Instant::MAX,
+        )
+        .map_err(|_| MctpError::from_code(ResponseCode::InternalError))
+    }
+
+    /// Stub for non-Pigweed builds (Cargo workspace).
+    #[cfg(not(feature = "pigweed"))]
     fn send_recv(&self, _req_len: usize) -> Result<usize, MctpError> {
-        // TODO(Phase 6): Replace with:
-        //   let mut inner = self.inner.borrow_mut();
-        //   syscall::channel_transact(
-        //       self.handle,
-        //       &inner.request_buf[..req_len],
-        //       &mut inner.response_buf,
-        //       Instant::MAX,
-        //   ).map_err(|_| MctpError::from_code(ResponseCode::InternalError))
         Err(MctpError::from_code(ResponseCode::InternalError))
     }
 }

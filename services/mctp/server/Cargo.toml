@@ -6,6 +6,8 @@ version = "0.1.0"
 edition = "2021"
 description = "MCTP server implementation for OpenPRoT"
 license = "Apache-2.0"
+# main.rs is a Pigweed binary built by Bazel only.
+autobins = false
 
 [dependencies]
 openprot-mctp-api = { path = "../api" }

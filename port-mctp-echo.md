@@ -81,36 +81,37 @@ Port the echo task from hubris `task/mctp-echo/`.
 - [x] IPC client (`services/mctp/client/`) — `IpcMctpClient` implementing `MctpClient` via wire protocol + IPC
 - [x] Server-side IPC dispatch (`services/mctp/server/src/dispatch.rs`) — decodes wire requests, calls `Server`
 - [x] Wire-protocol dispatch integration test (`tests/dispatch.rs`) — full round-trip through wire encoding
-- [ ] Echo binary as Pigweed userspace process (needs Phase 6 platform wiring)
-- [ ] Wire up with server + I2C transport for an end-to-end demo
+- [x] Echo binary as Pigweed userspace process (`target/ast1060-evb/mctp/mctp_echo.rs`)
+- [ ] Wire up with server + I2C transport for an end-to-end demo (needs real I2C sender in server `main.rs`)
 
-## Phase 6: Pigweed Platform Integration — NOT STARTED
+## Phase 6: Pigweed Platform Integration — MOSTLY DONE
 
 Wire up the MCTP server as a Pigweed userspace process on the AST1060-EVB (`target/ast1060-evb/`).
 
-- [ ] MCTP server `main.rs`: event loop driven by pw_kernel IPC/channels
+- [x] MCTP server `main.rs`: event loop driven by pw_kernel IPC/channels
   - Replaces hubris `sys_recv_open` / notifications / `idol` IPC dispatch
   - Uses `dispatch_mctp_op` for IPC request handling
   - Follows the pattern established by `services/i2c/server/`
-- [ ] Connect `IpcMctpClient::send_recv` to `syscall::channel_transact`
-- [ ] Bazel BUILD files for each new crate (following `services/i2c/` pattern)
-- [ ] `system.json5` entry for MCTP server + echo processes
-- [ ] Integration with `target/ast1060-evb/` platform definition
+  - Uses NoopSender for initial bring-up; real I2cSender wiring is TODO
+- [x] Connect `IpcMctpClient::send_recv` to `syscall::channel_transact` (gated behind `pigweed` feature)
+- [x] Bazel BUILD files for each new crate (following `services/i2c/` pattern)
+- [x] `system.json5` entry for MCTP server + echo processes (`target/ast1060-evb/mctp/`)
+- [x] Integration with `target/ast1060-evb/` platform definition (`target.rs`, `BUILD.bazel`)
 
 ## Phase 7: Testing & Documentation — PARTIALLY DONE
 
 - [x] Wire protocol unit tests (7 tests in `api/src/wire.rs`)
 - [x] Echo integration tests with client/server partition (2 tests in `server/tests/echo.rs`)
 - [x] Wire-protocol dispatch integration tests (2 tests in `server/tests/dispatch.rs`)
+- [x] README for each MCTP crate (`api/`, `server/`, `client/`, `transport-i2c/`)
 - [ ] QEMU-based end-to-end test (following `services/i2c/` test pattern)
 - [ ] Update `docs/src/specification/middleware/mctp.md` with implementation status
-- [ ] README for `services/mctp/`
 
 ---
 
 ## Current Status
 
-**Phases 1–3 complete, Phase 5 mostly done.** All library code is written: wire protocol, IPC client, server dispatch, and transport bindings. 11 tests pass. The remaining work is Phase 6 (Pigweed platform integration): server `main.rs`, Bazel BUILD files, and `system.json5`.
+**Phases 1–3, 5, and 6 mostly complete.** All library code, IPC dispatch, Bazel BUILD files, system configuration, and echo binary are written. 11 tests pass. Remaining work: wire up real I2cSender in server main.rs (replace NoopSender), QEMU e2e test, and docs update.
 
 ## Key Dependencies
 
