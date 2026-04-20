@@ -1,0 +1,181 @@
+# Licensed under the Apache-2.0 license
+
+load("@pigweed//pw_kernel/tooling:app_linker_script.bzl", "app_linker_script")
+load("@pigweed//pw_kernel/tooling:rust_app.bzl", "rust_app_codegen")
+load("@pigweed//pw_kernel/tooling:system_image.bzl", "system_image", "system_image_test")
+load("@pigweed//pw_kernel/tooling:target_codegen.bzl", "target_codegen")
+load("@pigweed//pw_kernel/tooling:target_linker_script.bzl", "target_linker_script")
+load("@pigweed//pw_kernel/tooling/panic_detector:rust_binary_no_panics_test.bzl", "rust_binary_no_panics_test")
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+load("//target/virt-ast1060-evb:defs.bzl", "TARGET_COMPATIBLE_WITH")
+load("//tools:qtest_test.bzl", "qtest_scenario")
+
+# ---------------------------------------------------------------------------
+# System image: i2c_server + i2c_qtest_client
+# ---------------------------------------------------------------------------
+
+system_image(
+    name = "i2c_qtest",
+    apps = [
+        ":i2c_server_app",
+        ":i2c_qtest_client_app",
+    ],
+    kernel = ":target",
+    platform = "//target/virt-ast1060-evb",
+    system_config = ":system_config",
+    tags = ["kernel"],
+    visibility = ["//visibility:public"],
+)
+
+system_image_test(
+    name = "i2c_qtest_test",
+    image = ":i2c_qtest",
+    target_compatible_with = TARGET_COMPATIBLE_WITH,
+)
+
+rust_binary_no_panics_test(
+    name = "no_panics_test",
+    binary = ":i2c_qtest",
+    tags = ["kernel"],
+)
+
+# ---------------------------------------------------------------------------
+# System configuration
+# ---------------------------------------------------------------------------
+
+filegroup(
+    name = "system_config",
+    srcs = ["system.json5"],
+    visibility = ["//visibility:public"],
+)
+
+# ---------------------------------------------------------------------------
+# Kernel target
+# ---------------------------------------------------------------------------
+
+target_codegen(
+    name = "codegen",
+    arch = "@pigweed//pw_kernel/arch/arm_cortex_m:arch_arm_cortex_m",
+    system_config = ":system_config",
+    target_compatible_with = TARGET_COMPATIBLE_WITH,
+)
+
+target_linker_script(
+    name = "linker_script",
+    system_config = ":system_config",
+    tags = ["kernel"],
+    target_compatible_with = TARGET_COMPATIBLE_WITH,
+    template = "//target/virt-ast1060-evb:linker_script_template",
+)
+
+rust_binary(
+    name = "target",
+    srcs = ["target.rs"],
+    edition = "2024",
+    tags = ["kernel"],
+    target_compatible_with = TARGET_COMPATIBLE_WITH,
+    deps = [
+        ":codegen",
+        ":linker_script",
+        "//target/virt-ast1060-evb:entry",
+        "@pigweed//pw_kernel/arch/arm_cortex_m:arch_arm_cortex_m",
+        "@pigweed//pw_kernel/kernel",
+        "@pigweed//pw_kernel/subsys/console:console_backend",
+        "@pigweed//pw_kernel/target:target_common",
+        "@pigweed//pw_kernel/userspace",
+        "@pigweed//pw_log/rust:pw_log",
+        "@rust_crates//:cortex-m-semihosting",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# App 1: I2C server (redeclared here bound to virt's system_config)
+# ---------------------------------------------------------------------------
+
+rust_app_codegen(
+    name = "app_i2c_server",
+    app_name = "i2c_server",
+    edition = "2024",
+    system_config = ":system_config",
+    tags = ["kernel"],
+    target_compatible_with = TARGET_COMPATIBLE_WITH,
+)
+
+app_linker_script(
+    name = "i2c_server_app.linker_script",
+    app_name = "i2c_server",
+    system_config = ":system_config",
+    tags = ["kernel"],
+)
+
+rust_binary(
+    name = "i2c_server_app",
+    srcs = ["//services/i2c/server:src/main.rs"],
+    edition = "2024",
+    tags = ["kernel"],
+    target_compatible_with = TARGET_COMPATIBLE_WITH,
+    deps = [
+        ":app_i2c_server",
+        ":i2c_server_app.linker_script",
+        "//services/i2c/api:i2c_api",
+        "//services/i2c/backend-aspeed:i2c_backend_aspeed",
+        "@pigweed//pw_kernel/syscall:syscall_user",
+        "@pigweed//pw_kernel/userspace",
+        "@pigweed//pw_log/rust:pw_log",
+        "@pigweed//pw_status/rust:pw_status",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# App 2: I2C qtest client (scenario dispatcher)
+# ---------------------------------------------------------------------------
+
+rust_app_codegen(
+    name = "app_i2c_qtest_client",
+    app_name = "i2c_qtest_client",
+    edition = "2024",
+    system_config = ":system_config",
+    tags = ["kernel"],
+    target_compatible_with = TARGET_COMPATIBLE_WITH,
+)
+
+app_linker_script(
+    name = "i2c_qtest_client_app.linker_script",
+    app_name = "i2c_qtest_client",
+    system_config = ":system_config",
+    tags = ["kernel"],
+)
+
+rust_binary(
+    name = "i2c_qtest_client_app",
+    srcs = ["src/client.rs"],
+    crate_root = "src/client.rs",
+    edition = "2024",
+    tags = ["kernel"],
+    target_compatible_with = TARGET_COMPATIBLE_WITH,
+    deps = [
+        ":app_i2c_qtest_client",
+        ":i2c_qtest_client_app.linker_script",
+        "//services/i2c/api:i2c_api",
+        "//services/i2c/client:i2c_client",
+        "@pigweed//pw_kernel/syscall:syscall_user",
+        "@pigweed//pw_kernel/userspace",
+        "@pigweed//pw_log/rust:pw_log",
+        "@pigweed//pw_status/rust:pw_status",
+    ],
+)
+
+# ---------------------------------------------------------------------------
+# qtest scenario runners — each expects the contributor to have built the
+# clockdomain/qemu@ast10x0-i2c branch and exported:
+#
+#   --test_env=QTEST_QEMU_BINARY=/path/to/qemu/build-arm/qemu-system-arm
+#   --test_env=I2C_SERVER_QTEST_BIN=/path/to/qemu/build-arm/tests/qtest/aspeed_i2c_server-test
+# ---------------------------------------------------------------------------
+
+[qtest_scenario(
+    name = "scenario_" + str(scenario_id),
+    image = ":i2c_qtest",
+    firmware_platform = "//target/virt-ast1060-evb",
+    scenario_id = scenario_id,
+) for scenario_id in [1, 5, 6, 7, 8, 9, 10, 11]]

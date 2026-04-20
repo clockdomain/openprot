@@ -1,0 +1,122 @@
+// Licensed under the Apache-2.0 license
+
+// Virtual AST1060-EVB I2C qtest image (QEMU).
+//
+// Pairs i2c_server (real backend-aspeed talking to QEMU's emulated I2C
+// controllers) with i2c_qtest_client, a scenario dispatcher that is poked
+// from outside through the aspeed-qtest-ctrl scratchpad device at
+// 0x7e7d0000 (sibling of i2c-test-master @ 0x7e7c0000, both shipped on
+// clockdomain/qemu@ast10x0-i2c).
+//
+// Console is semihosting (per //target/virt-ast1060-evb).
+//
+// PMSAv7-friendly memory layout:
+//   0x00000000 - 0x00000500: Vector table + kernel annotations (1280 bytes)
+//   0x00000500 - 0x00010000: Kernel flash (~62KB)
+//   0x00010000 - 0x00020000: i2c_server flash (64KB)
+//   0x00020000 - 0x00028000: i2c_qtest_client flash (32KB)
+//   0x00058000 - 0x00070000: Kernel RAM (96KB)
+//   0x00070000 - 0x00080000: i2c_server RAM (64KB)
+//   0x00080000 - 0x00088000: i2c_qtest_client RAM (32KB)
+{
+    arch: {
+        type: "armv7m",
+        vector_table_start_address: 0x00000000,
+        vector_table_size_bytes: 1792,  // 0x700 — fits ast1060-pac IRQ vector table + process annotations
+    },
+    kernel: {
+        flash_start_address: 0x00000700,
+        flash_size_bytes: 63744,          // ends at 0x10000
+        ram_start_address: 0x00058000,
+        ram_size_bytes: 98304,            // 96KB
+    },
+    apps: [
+        // ──── I2C Server ────
+        // Owns the 14 AST1060 I2C controllers (emulated by patched QEMU).
+        {
+            name: "i2c_server",
+            flash_size_bytes: 65536,      // 64KB
+            ram_size_bytes: 65536,        // 64KB
+            processes: [
+                {
+                    name: "i2c server process",
+                    objects: [
+                        {
+                            name: "I2C",
+                            type: "channel_handler",
+                        },
+                        {
+                            name: "I2C2_IRQ",
+                            type: "interrupt",
+                            irqs: [
+                                { name: "i2c2", number: 112 },
+                            ],
+                        },
+                        {
+                            name: "WG",
+                            type: "wait_group",
+                        },
+                    ],
+                    memory_mappings: [
+                        {
+                            name: "i2c_controllers",
+                            type: "device",
+                            start_address: 0x7e7b0000,
+                            size_bytes: 0x2000,
+                        },
+                        {
+                            name: "scu",
+                            type: "device",
+                            start_address: 0x7e6e2000,
+                            size_bytes: 0x1000,
+                        },
+                    ],
+                    threads: [
+                        {
+                            name: "i2c server thread",
+                            stack_size_bytes: 4096,
+                        },
+                    ],
+                },
+            ],
+        },
+        // ──── I2C qtest client ────
+        // Polls aspeed-qtest-ctrl R_SCENARIO_ID, dispatches to scenario
+        // routines that drive i2c_server over IPC, reports status + result
+        // bytes through the scratchpad, zeroes R_SCENARIO_ID on completion.
+        {
+            name: "i2c_qtest_client",
+            flash_size_bytes: 32768,      // 32KB
+            ram_size_bytes: 32768,        // 32KB
+            processes: [
+                {
+                    name: "i2c qtest client process",
+                    objects: [
+                        {
+                            name: "I2C",
+                            type: "channel_initiator",
+                            handler_process: "i2c server process",
+                            handler_object_name: "I2C",
+                        },
+                    ],
+                    memory_mappings: [
+                        {
+                            // aspeed-qtest-ctrl scratchpad.
+                            // Landed on clockdomain/qemu@ast10x0-i2c, commit 4f424a0.
+                            name: "qtest_ctrl",
+                            type: "device",
+                            start_address: 0x7e7d0000,
+                            size_bytes: 0x1000,
+                        },
+                    ],
+                    threads: [
+                        {
+                            name: "i2c qtest client thread",
+                            stack_size_bytes: 4096,
+                        },
+                    ],
+                },
+            ],
+        },
+    ],
+}

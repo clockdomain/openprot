@@ -1,0 +1,5 @@
+# Licensed under the Apache-2.0 license
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files(["qtest_test.bzl"])

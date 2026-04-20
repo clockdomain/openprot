@@ -43,6 +43,7 @@ rust_library(
         "@pigweed//pw_kernel/arch/arm_cortex_m:arch_arm_cortex_m",
         "@pigweed//pw_kernel/kernel",
         "@rust_crates//:cortex-m-rt",
+        "@oot_crates_no_std//:aspeed-ddk",
     ],
 )
 

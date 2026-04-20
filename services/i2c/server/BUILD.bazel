@@ -2,6 +2,10 @@
 
 load("@pigweed//pw_kernel/tooling:rust_app.bzl", "rust_app")
 
+# Exported so other platforms (e.g. //target/virt-ast1060-evb/i2c-qtest) can
+# redeclare a rust_app against their own system_config.
+exports_files(["src/main.rs"])
+
 rust_app(
     name = "i2c_server",
     codegen_crate_name = "app_i2c_server",
