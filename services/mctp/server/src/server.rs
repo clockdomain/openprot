@@ -267,6 +267,7 @@ impl<S: Sender, const OUTSTANDING: usize> Server<S, OUTSTANDING> {
     pub fn inbound(&mut self, pkt: &[u8]) -> Result<(), MctpError> {
         self.stack
             .inbound(pkt)
+            .map(|_| ())
             .map_err(mctp_error_to_server_error)
     }
 }
