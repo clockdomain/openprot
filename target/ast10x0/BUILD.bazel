@@ -9,7 +9,9 @@ load("//target/ast10x0:defs.bzl", "TARGET_COMPATIBLE_WITH")
 
 package(default_visibility = [":__subpackages__"])
 
-# TODO: Set to true when running under QEMU (ast1030-evb machine).
+# Set automatically by `--config=virt_ast10x0` (see /.bazelrc) when running
+# under QEMU's ast1030-evb machine; flips kernel_config's `qemu` Cargo feature
+# so SysTick is retuned to QEMU's 12 MHz emulated clock.
 bool_flag(
     name = "qemu",
     build_setting_default = False,
