@@ -10,10 +10,7 @@ load("//target/ast10x0:defs.bzl", "TARGET_COMPATIBLE_WITH")
 
 system_image(
     name = "ipc",
-    apps = [
-        "@pigweed//pw_kernel/tests/ipc/user:initiator",
-        "@pigweed//pw_kernel/tests/ipc/user:handler",
-    ],
+    apps = ["@pigweed//pw_kernel/tests/ipc/user:ipc"],
     kernel = ":target",
     platform = "//target/ast10x0",
     system_config = ":system_config",
