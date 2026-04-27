@@ -26,10 +26,6 @@ git_override(
     patch_args = ["-p1"],
     patches = [
         "//third_party/pigweed:veer_pic_generic_type.patch",
-        # Re-export rust_process / multi_process_app generated targets so the
-        # bundle can reference upstream IPC apps from system_image rules.
-        "//third_party/pigweed:visibility_rust_process.patch",
-        "//third_party/pigweed:visibility_multi_process_app.patch",
         # Allow integration_tests to build for armv7-m / armv7e-m so the
         # AST10x0 unittest_runner can use it.
         "//third_party/pigweed:integration_tests_armv7m.patch",
