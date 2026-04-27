@@ -98,6 +98,26 @@
       "targets": [
         "//target/earlgrey/..."
       ]
+    },
+    {
+      "name": "ast10x0_qemu_tests",
+      "build_config": {
+        "name": "ast10x0_qemu_tests_config",
+        "description": "Run AST10x0 QEMU-based tests",
+        "build_type": "bazel",
+        "args": [
+          "--keep_going",
+          "--config=virt_ast10x0",
+          "--test_output=streamed"
+        ],
+        "driver_options": {
+          "@type": "pw.build.proto.BazelDriverOptions",
+          "no_test": false
+        }
+      },
+      "targets": [
+        "//target/ast10x0/..."
+      ]
     }
   ],
   "tools": [
@@ -139,9 +159,10 @@
     },
     {
       "name": "ci",
-      "description": "Execute CI tests (excluding hardware and heavyweight simulator tests)",
+      "description": "Execute CI tests plus dedicated AST10x0 QEMU coverage",
       "builds": [
-        "ci_tests"
+        "ci_tests",
+        "ast10x0_qemu_tests"
       ]
     },
     {
@@ -149,6 +170,7 @@
       "description": "Workflow for checking upstream pigweed compatibility",
       "builds": [
         "ci_tests",
+        "ast10x0_qemu_tests",
         "earlgrey_verilator_tests"
       ]
     }
