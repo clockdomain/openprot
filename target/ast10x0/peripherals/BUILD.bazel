@@ -23,6 +23,7 @@ rust_library(
         "i2c/timing.rs",
         "i2c/transfer.rs",
         "i2c/types.rs",
+        "pinctrl/mod.rs",
         "uart/mod.rs",
     ],
     crate_name = "ast10x0_peripherals",
@@ -36,5 +37,8 @@ rust_library(
         "@rust_crates//:embedded-hal-nb",
         "@rust_crates//:embedded-io",
         "@rust_crates//:nb",
+    ],
+    proc_macro_deps = [
+        "@rust_crates//:paste",
     ],
 )

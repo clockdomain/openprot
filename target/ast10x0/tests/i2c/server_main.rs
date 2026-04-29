@@ -47,10 +47,6 @@ fn entry() -> ! {
         signals::I2C,
         handle::I2C_IRQ as usize,
     );
-    // Prime the NVIC: the kernel only enables an IRQ in the NVIC the
-    // first time userspace acks it. Without this initial ack, even a
-    // software-triggered IRQ stays pending forever.
-    let _ = syscall::interrupt_ack(handle::I2C_IRQ, signals::I2C);
 
     // SAFETY: this server task exclusively owns I2C bus `BUS_ID`'s
     // peripherals via the system.json5 device mapping; constructor

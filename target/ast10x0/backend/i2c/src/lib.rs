@@ -9,15 +9,36 @@
 //! `bus: u8` against the configured bus and routes everything else to
 //! the peripheral driver.
 //!
-//! Yield closure is a non-capturing `fn(u32)`; today it's a
-//! `core::hint::spin_loop` shim. Replace with a kernel-yield syscall
-//! once Pigweed exposes one.
+//! # Architecture
+//!
+//! ```text
+//! Platform entry.rs (boot, single-threaded, kernel context):
+//!   init_i2c_global()                ← SCU reset + I2CG0C/I2CG10
+//!   Pinctrl::apply_pinctrl_group()   ← SCU4xx pin mux (per bus used)
+//!
+//! Server task (one per system image, single-bus):
+//!   Ast1060I2cBackend::new(bus_id, config, yield_ns)
+//!     bus_ptrs(bus_id)               ← &PAC I2cN + I2cbuffN regs
+//!     Ast1060I2c::new(...)           ← I2CC00 reset, timing, IER
+//!
+//!   per IPC op (controller mode):
+//!     check_bus(bus)                 ← validate bus == bus_id
+//!     Ast1060I2c::write/read/...     ← reuses the persistent instance
+//! ```
+//!
+//! No per-op `from_initialized` reconstruction is needed: the backend
+//! holds a single live `Ast1060I2c<…>` that handles every request.
+//!
+//! `yield_ns` is a non-capturing `fn(u32)` supplied by the binary.
+//! For IRQ-driven servers it should `object_wait` on the bus's IRQ
+//! signal so the task sleeps until the controller fires (see the
+//! `wait_for_i2c_irq` example in `target/ast10x0/tests/i2c/server_main.rs`).
 //!
 //! See `drivers/i2c/MIGRATION_PLAN.md` §4-§5 for the multi-backend
 //! and single-bus design rationale.
 
 use ast10x0_peripherals::i2c::{
-    init_i2c_global, Ast1060I2c, I2cConfig, I2cError, SlaveBuffer, SlaveConfig, SlaveEvent,
+    Ast1060I2c, I2cConfig, I2cError, SlaveBuffer, SlaveConfig, SlaveEvent,
 };
 use ast1060_pac::{i2c, i2cbuff};
 use i2c_api::backend::I2cBackend;
@@ -33,8 +54,8 @@ pub struct Ast1060I2cBackend {
     bus_id: u8,
     /// Hardware handle for the configured bus.
     i2c: Ast1060I2c<'static, fn(u32)>,
-    /// Server-side notification flag (Phase 7 wires this to the IRQ
-    /// branch in the runtime).
+    /// Server-side notification flag toggled by
+    /// `enable_slave_notification` / `disable_slave_notification`.
     notification_enabled: bool,
     /// Last drained slave RX, available to subsequent SlaveReceive calls.
     slave_rx: SlaveBuffer,
@@ -45,10 +66,12 @@ impl Ast1060I2cBackend {
     ///
     /// # Safety
     ///
+    /// - The platform's pre-kernel `entry.rs` must have already run
+    ///   `init_i2c_global()` and `Pinctrl::apply_pinctrl_group(...)`
+    ///   for `bus_id`. SCU lives outside this process's memory
+    ///   mappings; touching it from userspace is the platform's job.
     /// - `bus_id` must be the controller this server task exclusively
     ///   owns (declared in the system image's `system.json5`).
-    /// - The PAC's `init_i2c_global()` and pinmux configuration must
-    ///   have been applied by platform init before this is called.
     /// - This must be called once per server task.
     pub unsafe fn new(
         bus_id: u8,
@@ -56,15 +79,9 @@ impl Ast1060I2cBackend {
         yield_ns: fn(u32),
     ) -> Result<Self, ResponseCode> {
         let (regs, buff) = bus_ptrs(bus_id).ok_or(ResponseCode::InvalidBus)?;
-        // Bring up the I2C global registers. Idempotent: guarded
-        // internally by I2CGLOBAL_INIT so repeat calls are no-ops.
-        init_i2c_global();
         // SAFETY: caller guarantees exclusive ownership of `bus_id`'s
         // peripherals; pointers come straight from the PAC and are
-        // valid for 'static. `yield_ns` is supplied by the binary —
-        // for single-bus IRQ-driven servers it should `object_wait` on
-        // the I2C IRQ signal so the task sleeps until the controller
-        // fires (matches the notification-only design).
+        // valid for 'static. `yield_ns` is supplied by the binary.
         let i2c = unsafe {
             Ast1060I2c::new(regs, buff, config, yield_ns).map_err(map_i2c_error)?
         };
@@ -82,7 +99,7 @@ impl Ast1060I2cBackend {
         self.bus_id
     }
 
-    /// Phase 7 hook: drain hardware RX into [`Self::slave_rx`].
+    /// Drain hardware RX into [`Self::slave_rx`].
     pub fn drain_to_internal_buffer(&mut self) -> Result<usize, ResponseCode> {
         let mut buf = [0u8; 32];
         let n = self.i2c.slave_read(&mut buf).map_err(map_i2c_error)?;
@@ -170,9 +187,8 @@ impl I2cBackend for Ast1060I2cBackend {
 
     fn slave_receive(&mut self, bus: u8, buf: &mut [u8]) -> Result<usize, ResponseCode> {
         self.check_bus(bus)?;
-        // If we drained on a prior IRQ (Phase 7), serve from the
-        // internal buffer first. Otherwise fall through to a polling
-        // hardware read.
+        // If we drained on a prior IRQ, serve from the internal buffer
+        // first. Otherwise fall through to a polling hardware read.
         let buffered = self.slave_rx.data().len();
         if buffered > 0 {
             let n = buffered.min(buf.len());
@@ -191,8 +207,8 @@ impl I2cBackend for Ast1060I2cBackend {
         self.check_bus(bus)?;
         // The peripheral exposes `slave_has_data()` polling but no
         // event-typed wait; synthesize a DataReceived event when bytes
-        // arrive. Other event kinds (Stop, ReadRequest, etc.) await
-        // Phase 7's IRQ-driven notification path.
+        // arrive. Other event kinds (Stop, ReadRequest, etc.) need an
+        // IRQ-driven notification path.
         loop {
             if self.i2c.slave_has_data() {
                 let n = self.i2c.slave_read(rx_buf).map_err(map_i2c_error)?;

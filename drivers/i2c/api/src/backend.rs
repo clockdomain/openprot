@@ -75,7 +75,7 @@ pub trait I2cBackend {
     fn disable_slave_notification(&mut self, bus: u8) -> Result<(), ResponseCode>;
 
     /// Drain hardware RX into an internal buffer for `bus`. Called by
-    /// the runtime's IRQ branch (Phase 7) to move bytes off the wire
-    /// before the client wakes.
+    /// the runtime's IRQ branch to move bytes off the wire before the
+    /// client wakes.
     fn drain_slave_rx(&mut self, bus: u8) -> Result<usize, ResponseCode>;
 }

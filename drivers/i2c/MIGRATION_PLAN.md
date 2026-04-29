@@ -330,24 +330,71 @@ only one.
 ## 7. Yield closure decision
 
 The peripheral `Ast1060I2c<'a, Y>` requires `Y: FnMut(u32)` —
-called as `(yield_ns)(100_000)` between status polls. Two options for
-threading this through the backend:
+called as `(yield_ns)(100_000)` between status polls inside
+`wait_completion`. Two questions: how to thread the type through, and
+what the function should *do*.
+
+### Type threading
 
 - **(a) Generic backend struct.** `Ast1060I2cBackend<Y>` carries the
   closure type. `pub type Backend = Ast1060I2cBackend<fn(u32)>;`
-  pins it to a function pointer. Caller writes a free function and
-  passes its name. Composes naturally with the `crate_name = "i2c_backend"`
-  indirection — swapping platforms is a label_flag flip.
+  pins it to a function pointer.
 - **(b) Erased fn-pointer field.** `Ast1060I2cBackend` is non-generic,
-  stores `fn(u32)` directly. Backend constructor takes the function
-  pointer. Loses capturing closures but keeps every call site
-  closure-type-free.
+  takes `fn(u32)` at construction. Loses capturing closures but
+  keeps the multi-backend `crate_name = "i2c_backend"` substitution
+  trivial.
 
-Recommendation: **(b)** for the first cut. The yield is going to be
-`pigweed::yield_for_ns` (or `core::hint::spin_loop`), neither of
-which captures. Generic propagation has been a tax in the peripheral
-already — no reason to repeat it at the service level. Phase 7 can
-revisit if the slave path needs captures.
+Settled on **(b)**: backend type stays non-generic, every call site
+closure-type-free.
+
+### What the yield does
+
+The peripheral driver doesn't care; the binary supplies the body.
+Three sensible bodies:
+
+| Body | Behavior | When to pick |
+|---|---|---|
+| `core::hint::spin_loop()` | Busy-poll | Bare-metal, no scheduler, latency over CPU |
+| `cortex_m::asm::wfe()` | Bare-metal sleep until any event | Low-power without a kernel |
+| `object_wait(WG, signals::I2C, MAX) + interrupt_ack` | Task-sleep until I2C IRQ fires | Running under the Pigweed kernel — what we use |
+
+The third option is what
+[`tests/i2c/server_main.rs:wait_for_i2c_irq`](../../target/ast10x0/tests/i2c/server_main.rs)
+implements. Net behavior: between issuing an I2C op and its
+completion, the server task is fully descheduled — the kernel runs
+other tasks. The peripheral's polling-shaped loop iterates only when
+the controller actually has news.
+
+### IRQ-consumption ordering
+
+The runtime's main loop and `wait_for_i2c_irq` both `object_wait` on
+the same `signals::I2C` entry. They never run concurrently — the
+server is single-threaded, so only one is parked at a time:
+
+| Server state | Who's blocked on `signals::I2C` |
+|---|---|
+| Idle in runtime loop | runtime's `object_wait` |
+| Mid-dispatch, peripheral op in flight | `wait_for_i2c_irq` inside `wait_completion` |
+
+Real consequence: if a **slave RX event** fires on the bus while the
+controller is in the middle of a master TX (multi-role server, rare
+but possible on a multi-master bus), the IRQ wakes
+`wait_for_i2c_irq`, the peripheral reads status, decides "not my
+completion", re-arms NVIC, and iterates. The runtime's drain-and-
+notify branch is **not** the one that ran. The slave bytes sit in
+the FIFO until the master op finishes and the runtime's loop
+eventually fires for the next IRQ.
+
+For single-master controller use (today's smoke test) this never
+matters. For mixed-role traffic, latency on slave notifications is
+bounded by the longest in-flight master op. Address by either:
+
+- Routing the runtime IRQ branch from inside `wait_completion`'s
+  iteration when a non-completion IRQ is detected, or
+- Splitting controller and slave IRQs onto separate signals so
+  `wait_for_i2c_irq` only consumes completion events.
+
+Neither is needed for Phase 1-6.
 
 ## 8. Risks & open questions
 
@@ -372,6 +419,13 @@ revisit if the slave path needs captures.
   liberally. The bundle's usart server is silent. Match the bundle's
   silence; if logs help debugging during phases 5-6, leave them in
   behind a feature gate.
+- **IRQ steal during master ops.** The yield closure
+  (`wait_for_i2c_irq`) and the runtime IRQ branch share
+  `signals::I2C`. While a master op is in flight, an unrelated
+  slave-event IRQ wakes the yield (not the runtime), delaying the
+  drain-and-notify path until the master op completes. Bounded by
+  the longest in-flight master op. See §7 for mitigations; not
+  load-bearing for single-master use.
 
 ## 9. What's explicitly out of scope
 
