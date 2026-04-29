@@ -1,0 +1,16 @@
+# Licensed under the Apache-2.0 license
+
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+rust_library(
+    name = "i2c_client",
+    srcs = ["src/lib.rs"],
+    edition = "2024",
+    tags = ["kernel"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//drivers/i2c/api:i2c_api",
+        "@pigweed//pw_kernel/userspace",
+        "@rust_crates//:embedded-hal",
+    ],
+)

@@ -1,0 +1,14 @@
+# Licensed under the Apache-2.0 license
+
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+rust_library(
+    name = "i2c_backend_mock",
+    srcs = ["src/lib.rs"],
+    crate_name = "i2c_backend",
+    edition = "2024",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//drivers/i2c/api:i2c_api",
+    ],
+)

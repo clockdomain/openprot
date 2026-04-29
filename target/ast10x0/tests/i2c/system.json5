@@ -1,0 +1,111 @@
+// Licensed under the Apache-2.0 license
+// SPDX-License-Identifier: Apache-2.0
+
+// AST10x0 I2C Service Configuration — single-bus (bus 0).
+// ARM Cortex-M4 @ 200 MHz with 768KB SRAM (0x00000000 - 0x000BFFFF)
+// NOTE: AST10x0 does not support XIP - firmware executes from RAM.
+//
+// Memory layout (vector table sized for IRQ 110 — bigger than usart's
+// IRQ 8, so we shift the kernel start up to 0x00000800):
+//   0x00000000 - 0x00000800: Vector table (2048 bytes — fits IRQ 110+)
+//   0x00000800 - 0x00020000: Kernel code
+//   0x00020000 - 0x00060000: I2C app flash (256KB)
+//   0x00060000 - 0x00080000: Kernel RAM (128KB)
+//   0x00080000 - 0x000A0000: App RAM (128KB)
+//
+// IRQ topology: notification-only. The peripheral's `wait_completion`
+// yield blocks on this IRQ object, so the server task sleeps until the
+// I2C controller signals (transfer complete, NACK, slave event, …).
+// AST1060 I2C bus 0 → NVIC line 110 (per QEMU's aspeed_ast10x0.c, IRQ
+// range 110-123 maps to buses 0-13).
+{
+    arch: {
+        type: "armv7m",
+        vector_table_start_address: 0x00000000,
+        vector_table_size_bytes: 2048,  // 0x800 — fits IRQs through 110+
+    },
+    kernel: {
+        flash_start_address: 0x00000800,
+        flash_size_bytes: 128000,        // 0x1F800 = 0x20000 - 0x800
+        ram_start_address: 0x00060000,
+        ram_size_bytes: 131072,
+    },
+    apps: [
+        {
+            name: "i2c_server_bin",
+            flash_size_bytes: 131072,
+            processes: [
+                {
+                    name: "i2c_server_process",
+                    ram_size_bytes: 65536,
+                    objects: [
+                        {
+                            // Multiplexes IPC channel + I2C IRQ in the server loop.
+                            name: "wg",
+                            type: "wait_group",
+                        },
+                        {
+                            name: "i2c",
+                            type: "channel_handler",
+                        },
+                        {
+                            // AST1060 I2C bus 0 interrupt line.
+                            // Source: ast1060_pac::Interrupt::I2c0 = 110.
+                            name: "i2c_irq",
+                            type: "interrupt",
+                            irqs: [
+                                {
+                                    name: "i2c",
+                                    number: 110,
+                                },
+                            ],
+                        },
+                    ],
+                    memory_mappings: [
+                        {
+                            // AST1060 I2C bus 0 — controller registers + buffer.
+                            // Controller block:  0x7e7b_0080..0x7e7b_0100
+                            // Buffer block:      0x7e7b_0c00..0x7e7b_0c20
+                            // The mapping covers both with a 4 KB page so the
+                            // peripheral driver can address each directly.
+                            name: "i2c0",
+                            type: "device",
+                            start_address: 0x7e7b0000,
+                            size_bytes: 0x1000,
+                        },
+                    ],
+                    threads: [
+                        {
+                            name: "i2c_server_thread",
+                            kernel_stack_size_bytes: 4096,
+                        },
+                    ],
+                },
+            ],
+        },
+        {
+            name: "i2c_client_app",
+            flash_size_bytes: 65536,
+            processes: [
+                {
+                    name: "i2c_client_process",
+                    ram_size_bytes: 32768,
+                    objects: [
+                        {
+                            name: "i2c",
+                            type: "channel_initiator",
+                            handler_process: "i2c_server_process",
+                            handler_object_name: "i2c",
+                        },
+                    ],
+                    threads: [
+                        {
+                            name: "i2c_client_thread",
+                            kernel_stack_size_bytes: 2048,
+                        },
+                    ],
+                },
+            ],
+        },
+    ],
+}

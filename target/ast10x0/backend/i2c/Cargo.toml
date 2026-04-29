@@ -1,0 +1,7 @@
+[package]
+name = "i2c-backend-ast10x0"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+i2c-api = { path = "../../../../drivers/i2c/api" }

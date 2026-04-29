@@ -1,0 +1,8 @@
+[package]
+name = "i2c-client"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+i2c-api = { path = "../api" }
+embedded-hal = { version = "1", default-features = false }
