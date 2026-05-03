@@ -10,6 +10,13 @@ rust_library(
     name = "peripherals",
     srcs = [
         "lib.rs",
+        "scu/mod.rs",
+        "scu/registers.rs",
+        "scu/types.rs",
+        "scu/reset.rs",
+        "scu/clock.rs",
+        "scu/routing.rs",
+        "scu/status.rs",
         "spimonitor/mod.rs",
         "spimonitor/registers.rs",
         "spimonitor/types.rs",
