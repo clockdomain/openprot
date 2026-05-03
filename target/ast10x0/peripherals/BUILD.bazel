@@ -10,6 +10,12 @@ rust_library(
     name = "peripherals",
     srcs = [
         "lib.rs",
+        "spimonitor/mod.rs",
+        "spimonitor/registers.rs",
+        "spimonitor/types.rs",
+        "spimonitor/policy.rs",
+        "spimonitor/profile.rs",
+        "spimonitor/controller.rs",
         "uart/mod.rs",
     ],
     crate_name = "ast10x0_peripherals",
