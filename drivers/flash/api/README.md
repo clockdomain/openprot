@@ -1,22 +1,22 @@
 # flash_api
 
-Shared wire protocol and backend trait for the OpenPRoT flash driver.
+Shared types and backend trait for the OpenPRoT flash driver. This
+crate is what the flash client (the userspace task that sends
+requests) and the flash server (the platform task that handles them)
+both depend on.
 
 Bazel target: `//drivers/flash/api:flash_api`
 
-## Purpose
+## What's in here
 
-`flash_api` is the contract crate consumed by both sides of the flash
-IPC boundary:
+- the byte layout of flash requests and responses on the IPC channel
+- the list of operations (Read, Write, Erase, GetGeometry, …) and
+  their numeric codes
+- the data types used for discovery (`FlashGeometry`, `FlashRegion`)
+- the error code table
+- the `FlashBackend` trait that platform code implements
 
-- the userspace IPC facade ([`drivers/flash/client`](../client/)), which
-  serializes requests and parses responses,
-- the platform server (out of tree in this review repo), which dispatches
-  opcodes onto a `FlashBackend` impl.
-
-It owns the on-wire byte layout, the opcode set, the error code map,
-the discovery value types, and the backend trait surface. No transport,
-no syscalls, no platform code — pure data definitions plus one trait.
+No I/O, no syscalls, no platform code. Just types and a trait.
 
 ## Layer position
 
@@ -25,7 +25,7 @@ Application task
       │
       ▼
 FlashClient  ─────────►  flash_api  ◄───────── FlashServer
-                       (wire types,
+                       (shared types,
                         backend trait)
                               │
                               ▼
@@ -37,53 +37,49 @@ FlashClient  ─────────►  flash_api  ◄───────
 
 ## Glossary
 
-A few domain terms are used throughout this crate, the client, and the
-server:
+A few terms are used throughout this crate, the client, and the server:
 
-**Backend** — the platform-side code that actually talks to flash
-silicon. Implements the `FlashBackend` trait. There is exactly one
-backend per physical controller (e.g. an `Ast10x0FlashBackend` for the
-AST10x0 SMC/FMC). The backend is what gives meaning to a `Read` or an
-`Erase`; the wire protocol just shuttles the request to it.
+**Backend** — the platform code that actually talks to the flash
+chip's controller. It implements the `FlashBackend` trait. There is
+one backend per physical controller (e.g. `Ast10x0FlashBackend` for
+the AST10x0 SMC/FMC). The wire protocol shuttles requests *to* the
+backend; the backend is what makes a `Read` or an `Erase` actually do
+anything.
 
-**Geometry** — the *static shape* of a flash device, described by the
-`FlashGeometry` value type: total capacity, write-page granularity,
-which erase opcodes the part supports (4 KiB sector, 32 KiB block,
-64 KiB block, …), the smallest required alignment, the addressing mode
-(3-byte vs 4-byte addressing), and capability bits (e.g. whether the
-backend can satisfy a server-side cross-flash `Copy`). One geometry
-record per device. Authored statically by the backend; surfaced to
-clients via the `GetGeometry` opcode so a portable BMC tool doesn't
-need to hard-code the chip type per board.
+**Geometry** — what shape a flash chip has, returned by
+`FlashGeometry`: total capacity, write-page size, which erase sizes
+the part supports (4 KiB sector, 32 KiB block, 64 KiB block, …),
+smallest required alignment, addressing mode (3- or 4-byte), and a
+few capability bits. One record per chip, set by the backend at
+compile time and reported to clients via `GetGeometry`. Lets a tool
+that needs to run on multiple boards stop hard-coding the chip type.
 
-**Region** — a *logical sub-range* of a flash device, described by the
-`FlashRegion` value type: a base offset, a length, a logical handle
-(`route_key`), and attribute bits (read-only? filter-protected?
-hash-eligible?). A 64 MiB BMC flash might expose itself as one
-whole-chip region; an OpenPRoT-internal flash typically carves itself
-into four (active firmware / recovery / runtime state / AFM). One
-device, many regions; surfaced to clients via the `GetRegions` opcode.
+**Region** — a named sub-range of a flash chip, returned by
+`FlashRegion`: a base offset, a length, a logical handle
+(`route_key`), and a few flag bits. A 64 MiB BMC flash usually
+exposes itself as one whole-chip region; an OpenPRoT-internal flash
+typically exposes four (active firmware / recovery / runtime state /
+AFM). Clients ask for them via `GetRegions`.
 
-**Route key** — a `u32` naming a logical flash target — either the
-whole device this channel is bound to, or one of the regions within
-it. Carried inside `FlashRegion` so a region can be addressed
-independently when handed to another service.
+**Route key** — a `u32` that names a flash target — either the whole
+device this channel is bound to, or a region within it. Stored inside
+`FlashRegion` so a region can be referred to on its own when handed
+off to another service.
 
-**Capability flag** — a bit in `GeometryFlags` (per device) or
-`RegionAttrs` (per region) that says "this thing can do X" — e.g.
-`HASH_ELIGIBLE` advertises that a server-side hash consumer can ingest
-from this device or region without streaming bytes through the client
-channel.
+**Capability flag** — a bit in `GeometryFlags` (per chip) or
+`RegionAttrs` (per region) that says "this can do X." For example,
+`HASH_ELIGIBLE` means a server-side hash consumer can read directly
+from this device without sending the bytes through the client.
 
 ## Wire protocol
 
 ### Frame layout
 
-Every request frame is a `FlashRequestHeader` (16 bytes, little-endian,
-packed) followed by an opcode-specific payload of up to
-`MAX_PAYLOAD_SIZE` (256) bytes. Every response frame is a
-`FlashResponseHeader` (8 bytes, little-endian, packed) followed by an
-opcode-specific payload of up to `MAX_PAYLOAD_SIZE` bytes.
+A request is a `FlashRequestHeader` (16 bytes, little-endian, packed)
+followed by an operation-specific payload up to `MAX_PAYLOAD_SIZE`
+(256 bytes). A response is a `FlashResponseHeader` (8 bytes,
+little-endian, packed) followed by an operation-specific payload up
+to `MAX_PAYLOAD_SIZE`.
 
 ```rust
 #[repr(C, packed)]
@@ -105,29 +101,29 @@ pub struct FlashResponseHeader {
 }                                  // = 8 bytes
 ```
 
-Both headers derive `zerocopy::{FromBytes, IntoBytes, Immutable,
-KnownLayout}` and ship `new`/`success`/`error` builders plus
-little-endian-aware accessors (`address_value()`, `length_value()`,
-`value_word()`, `payload_length()`, …) so neither side needs to
-hand-roll byte twiddling.
+Both headers come with `new` / `success` / `error` builder functions
+and accessor methods (`address_value()`, `length_value()`,
+`value_word()`, `payload_length()`, …) that handle the little-endian
+conversion, so client and server code doesn't touch raw bytes
+directly.
 
-### Opcodes
+### Operations
 
-| Op | Value | Request shape | Response shape |
+| Op | Value | Request | Response |
 |---|---|---|---|
-| `Exists` | 0x01 | header only | `value` = 0/1 |
-| `GetCapacity` | 0x02 | header only | `value` = bytes |
+| `Exists` | 0x01 | header only | `value` = 0 or 1 |
+| `GetCapacity` | 0x02 | header only | `value` = total bytes |
 | `Read` | 0x03 | header (`address`, `length`) | `value` = byte count, payload = bytes read |
 | `Write` | 0x04 | header (`address`, `length`, `payload_len`) + payload | `value` = byte count |
 | `Erase` | 0x05 | header (`address`, `length`) | empty |
 | `GetGeometry` | 0x06 | header only | payload = `FlashGeometry` (24 B) |
 | `GetRegions` | 0x07 | header (`length` = max records) | `value` = count, payload = N × `FlashRegion` (16 B) |
 
-`MAX_PAYLOAD_SIZE` is a protocol constant: every backend honours the
-same value, so clients reference it directly rather than querying for
-it.
+`MAX_PAYLOAD_SIZE` is a fixed protocol constant — it is the same for
+every backend, so clients use the constant directly instead of asking
+the server.
 
-## Discovery value types
+## Discovery types
 
 ### `FlashGeometry` (24 B)
 
@@ -145,21 +141,22 @@ pub struct FlashGeometry {
 }
 ```
 
-`erase_sizes` as a bitmap lets the client pick the largest aligned
-erase opcode per stride (e.g. 4 KiB | 32 KiB | 64 KiB =
-`(1<<12) | (1<<15) | (1<<16)`).
+`erase_sizes` is a bitmap so a part that supports several granules
+can advertise all of them at once. For example, 4 KiB | 32 KiB | 64 KiB
+is `(1<<12) | (1<<15) | (1<<16)`. The client picks the largest aligned
+size for each block of bytes it wants to erase.
 
-`GeometryFlags` (`bitflags!`):
+`GeometryFlags` (chip-level capability bits):
 
 | Bit | Name | Meaning |
 |---|---|---|
-| 0 | `DMA_ELIGIBLE` | Backend can satisfy a server-side cross-flash byte copy without per-chunk client round-trips. |
-| 1 | `HASH_ELIGIBLE` | A server-side hash consumer can ingest from this device without streaming bytes through the client channel. |
+| 0 | `DMA_ELIGIBLE` | Backend can copy bytes between two flash regions in one request, without per-chunk round-trips through the client. |
+| 1 | `HASH_ELIGIBLE` | A server-side hash consumer can read from this chip directly, without sending the bytes through the client. |
 
 ### `FlashRegion` (16 B)
 
-Returned in the `GetRegions` response payload — one entry per logical
-region exposed by the device.
+Returned in the `GetRegions` response payload — one entry per region
+the device exposes.
 
 ```rust
 pub struct FlashRegion {
@@ -170,17 +167,17 @@ pub struct FlashRegion {
 }
 ```
 
-A backend with no carved sub-regions returns a single entry with
-`RegionAttrs::WHOLE_CHIP` set spanning `[0, capacity)`.
+A backend with no sub-regions returns a single entry with
+`RegionAttrs::WHOLE_CHIP` set, spanning `[0, capacity)`.
 
-`RegionAttrs` (`bitflags!`):
+`RegionAttrs` (per-region flags):
 
 | Bit | Name | Meaning |
 |---|---|---|
-| 0 | `FILTER_PROTECTED` | Server enforces an access policy over this region (mechanism is platform-specific). |
-| 1 | `HASH_ELIGIBLE`    | A server-side hash consumer can ingest this region without streaming bytes through the client. |
-| 2 | `READ_ONLY`        | Server refuses `Write`/`Erase` against this region. |
-| 3 | `WHOLE_CHIP`       | Region spans the whole physical chip. |
+| 0 | `FILTER_PROTECTED` | Server enforces an access policy over this region (the actual mechanism is platform-specific). |
+| 1 | `HASH_ELIGIBLE`    | A server-side hash consumer can read this region directly. |
+| 2 | `READ_ONLY`        | Server rejects `Write` and `Erase` against this region. |
+| 3 | `WHOLE_CHIP`       | Region covers the whole physical chip. |
 
 ## Backend trait
 
@@ -211,19 +208,21 @@ pub trait FlashBackend {
 }
 ```
 
-Discovery methods (`info`, `geometry`, `regions`) take `&self` — they
-report static authoring on the server side and don't need exclusive
-access. `geometry` and `regions` ship default impls so existing
-single-region single-erase-granule backends stay source-compatible
-without writing boilerplate.
+`info`, `geometry`, and `regions` take `&self` because they only
+report values the backend knows ahead of time — no exclusive access
+is needed. `geometry` and `regions` ship default implementations so a
+backend with one erase granule and no sub-regions doesn't have to
+write boilerplate.
 
-`RouteKey` is an associated type. Single-CS backends set it to `()`;
-multi-CS controllers set it to a chip-select index. Channel-implicit
-routing keeps the wire header free of routing fields — each
-`FlashClient` is bound to one CS via its IPC handle, and the server
-maps channel → backend → `RouteKey`. Where routing genuinely crosses a
-device boundary, the routing data lives inside the relevant struct
-(e.g. the `route_key` field on `FlashRegion`).
+`RouteKey` is an associated type. A backend with one chip-select sets
+it to `()`; a backend that drives a multi-chip-select controller sets
+it to a chip-select index. The wire header does not carry routing
+information — each `FlashClient` is tied to one chip-select via its
+IPC handle, and the server picks the right backend (and route key)
+based on which channel the request arrived on. When a piece of
+routing data really has to travel across a service boundary (for
+example the `route_key` field inside `FlashRegion`), it goes inside
+the relevant struct.
 
 ## Errors
 
@@ -244,18 +243,20 @@ device boundary, the routing data lives inside the relevant struct
 | `NotPermitted` | 0x09 | Write-protected or restricted region |
 | `InternalError` | 0xFF | Unclassified server fault |
 
-`BackendError` is the trait-level error backends produce; an `impl
-From<BackendError> for FlashError` provides the canonical mapping for
-the server's response-encoding path.
+`BackendError` is the trait-level error type backends return. An
+`impl From<BackendError> for FlashError` gives the server a single
+mapping when it encodes a response.
 
 ## Tests
 
-Host-side unit tests cover each wire type at the encoder/decoder
-level: opcode and error-code round-trips (known values + unknown-byte
-fallthrough), `new`-and-accessor round-trips for the request and
-response headers as well as `FlashGeometry` and `FlashRegion`,
-explicit little-endian byte-position asserts, and short-buffer
-rejection on header decode.
+Host-side unit tests cover each wire type:
+
+- known opcode and error-code values map to the right variant; unknown
+  byte values fall back to the documented "unknown" variant.
+- request and response headers, `FlashGeometry`, and `FlashRegion`
+  round-trip through `new()` → bytes → accessor reads with no loss.
+- byte-by-byte little-endian layout matches the documented format.
+- header decode rejects buffers that are too short.
 
 ```
 bazel test //drivers/flash/api:flash_api_test
@@ -263,8 +264,8 @@ bazel test //drivers/flash/api:flash_api_test
 
 ## Constraints
 
-- `no_std` — no allocator, no I/O.
-- Pure data + one trait. No syscalls, no clocks, no platform deps.
+- `no_std` — no heap, no I/O.
+- Just types plus one trait. No syscalls, no clocks, no platform code.
 - Host-buildable — picked up by the CI `//...` wildcard.
 
 ## Dependencies
@@ -272,4 +273,4 @@ bazel test //drivers/flash/api:flash_api_test
 | Crate | Role |
 |---|---|
 | `bitflags` | `GeometryFlags`, `RegionAttrs` |
-| `zerocopy` | `FromBytes` / `IntoBytes` derives on wire structs |
+| `zerocopy` | Derives that let the wire structs be safely viewed as bytes and back |
