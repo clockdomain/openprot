@@ -9,6 +9,7 @@ use super::types::ClockRegisterHalf;
 impl ScuRegisters {
     /// Gate clocks by setting bits in the selected clock-stop register half.
     pub fn gate_clock_mask(&self, half: ClockRegisterHalf, mask: u32) {
+        self.unlock_write_protection();
         match half {
             ClockRegisterHalf::Lower => {
                 self.regs().scu080().write(|w| unsafe { w.bits(mask) });
@@ -21,6 +22,7 @@ impl ScuRegisters {
 
     /// Ungate clocks by clearing bits in the selected clock-stop register half.
     pub fn ungate_clock_mask(&self, half: ClockRegisterHalf, mask: u32) {
+        self.unlock_write_protection();
         match half {
             ClockRegisterHalf::Lower => {
                 self.regs().scu084().write(|w| unsafe { w.bits(mask) });

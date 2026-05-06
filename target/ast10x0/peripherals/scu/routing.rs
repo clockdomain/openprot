@@ -15,6 +15,7 @@ impl ScuRegisters {
         instance: SpiMonitorInstance,
         passthrough: SpiMonitorPassthrough,
     ) {
+        self.unlock_write_protection();
         let enable = passthrough.is_enabled();
 
         self.regs().scu0f0().modify(|_, w| match instance {
@@ -31,6 +32,7 @@ impl ScuRegisters {
         instance: SpiMonitorInstance,
         source: SpiMonitorSource,
     ) {
+        self.unlock_write_protection();
         self.regs().scu0f0().modify(|_, w| unsafe {
             w.select_int_spimaster_connection()
                 .bits(instance as u8 + 1)
@@ -44,6 +46,7 @@ impl ScuRegisters {
 
     /// Disable any internal SPI-master detour route.
     pub fn clear_spim_internal_master_route(&self) {
+        self.unlock_write_protection();
         let mut bits = self.regs().scu0f0().read().bits();
         bits &= !0xF;
         self.regs().scu0f0().write(|w| unsafe { w.bits(bits) });
@@ -51,6 +54,7 @@ impl ScuRegisters {
 
     /// Select the external mux signal for a SPI monitor instance.
     pub fn set_spim_ext_mux(&self, instance: SpiMonitorInstance, mux: ScuExtMuxSelect) {
+        self.unlock_write_protection();
         let bit = mux.as_bool();
 
         self.regs().scu0f0().modify(|_, w| match instance {
@@ -81,6 +85,7 @@ impl ScuRegisters {
     /// Enable or disable the SCU-controlled MISO multi-function pin for a SPI
     /// monitor instance.
     pub fn set_spim_miso_multi_func(&self, instance: SpiMonitorInstance, enable: bool) {
+        self.unlock_write_protection();
         match instance {
             SpiMonitorInstance::Spim0 => {
                 self.regs()

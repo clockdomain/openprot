@@ -124,3 +124,130 @@ pub enum SpiMonitorError {
 
 /// Result alias for SPI monitor APIs.
 pub type Result<T> = core::result::Result<T, SpiMonitorError>;
+
+// ============================================================================
+// Boot-level types and abstractions
+// ============================================================================
+
+/// SPI Monitor instance identifier.
+///
+/// Maps to SPIPF1-4 hardware blocks on AST10x0.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MonitorInstance {
+    /// SPIPF1 (0x7E79_1000) - typically BMC/SMC flash
+    Spim0,
+    /// SPIPF2 (0x7E79_2000) - typically BMC dual flash
+    Spim1,
+    /// SPIPF3 (0x7E79_3000) - typically PCH/FMC flash
+    Spim2,
+    /// SPIPF4 (0x7E79_4000) - typically PCH dual flash
+    Spim3,
+}
+
+/// Mux routing selector for monitor path control.
+///
+/// Controls which SPI master (ROT or BMC/PCH) owns the flash access path
+/// through the monitor.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum MuxSelect {
+    /// Root of Trust has exclusive control
+    RotControl,
+    /// Host (BMC/PCH) has control
+    HostControl,
+}
+
+impl From<MuxSelect> for ExtMuxSel {
+    fn from(mux: MuxSelect) -> Self {
+        match mux {
+            MuxSelect::RotControl => ExtMuxSel::Sel0,
+            MuxSelect::HostControl => ExtMuxSel::Sel1,
+        }
+    }
+}
+
+impl From<ExtMuxSel> for MuxSelect {
+    fn from(ext: ExtMuxSel) -> Self {
+        match ext {
+            ExtMuxSel::Sel0 => MuxSelect::RotControl,
+            ExtMuxSel::Sel1 => MuxSelect::HostControl,
+        }
+    }
+}
+
+/// Monitor status snapshot at a point in time.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct MonitorStatus {
+    /// Current mux routing
+    pub mux: MuxSelect,
+    /// Whether policy tables are write-locked
+    pub policy_locked: bool,
+    /// Whether enforcement is actively filtering
+    pub enforcement_active: bool,
+    /// Number of policy violations logged
+    pub violation_count: u32,
+}
+
+/// Boot-level error types.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BootError {
+    /// Monitor instance not found or unavailable
+    MonitorNotFound,
+    /// Mux switch operation failed
+    MuxSwitchFailed,
+    /// Flash reset/control operation failed
+    FlashResetFailed,
+    /// Policy load failed (region conflict, out-of-range, etc.)
+    PolicyLoadFailed,
+    /// Policy verification failed (readback mismatch)
+    PolicyVerificationFailed,
+    /// Region overlap detected
+    RegionOverlap,
+    /// Invalid address or size
+    InvalidAddress,
+    /// Timeout waiting for flash operation
+    TimeoutWaitingForFlash,
+    /// Verification failed (state not as expected)
+    VerificationFailed,
+    /// Attempted to modify locked policy
+    LockedOutFromMonitor,
+    /// Hardware error
+    HardwareError,
+}
+
+/// Result type for boot operations.
+pub type BootResult<T> = core::result::Result<T, BootError>;
+
+/// Boot phase enumeration for state tracking.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BootPhase {
+    /// Initial state
+    Start,
+    /// Hold phase - ROT exclusive access
+    Hold,
+    /// Policy configuration phase
+    ConfigurePolicy,
+    /// Release phase - host control
+    Release,
+    /// Runtime monitoring phase
+    RuntimeMonitoring,
+}
+
+/// Boot configuration options.
+#[derive(Clone, Copy, Debug)]
+pub struct BootConfig {
+    pub enable_hold: bool,
+    pub enable_policy_config: bool,
+    pub enable_release: bool,
+    pub enable_verification: bool,
+}
+
+impl Default for BootConfig {
+    fn default() -> Self {
+        Self {
+            enable_hold: true,
+            enable_policy_config: true,
+            enable_release: true,
+            enable_verification: true,
+        }
+    }
+}

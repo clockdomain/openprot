@@ -7,6 +7,8 @@ use ast1060_pac as device;
 use core::cell::UnsafeCell;
 use core::marker::PhantomData;
 
+const SCU_UNLOCK_KEY: u32 = 0x1688_A8A8;
+
 /// Safe wrapper around the AST10x0 SCU register block.
 pub struct ScuRegisters {
     base: *const device::scu::RegisterBlock,
@@ -40,5 +42,13 @@ impl ScuRegisters {
     pub(crate) fn regs(&self) -> &device::scu::RegisterBlock {
         // SAFETY: Constructor guarantees a valid SCU register block pointer.
         unsafe { &*self.base }
+    }
+
+    /// Unlock SCU write-protected registers for subsequent write operations.
+    #[inline]
+    pub(crate) fn unlock_write_protection(&self) {
+        self.regs()
+            .scu000()
+            .write(|w| unsafe { w.bits(SCU_UNLOCK_KEY) });
     }
 }

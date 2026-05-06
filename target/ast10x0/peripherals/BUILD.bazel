@@ -20,6 +20,8 @@ rust_library(
         "spimonitor/mod.rs",
         "spimonitor/registers.rs",
         "spimonitor/types.rs",
+        "spimonitor/traits.rs",
+        "spimonitor/ast1060_monitor.rs",
         "spimonitor/policy.rs",
         "spimonitor/profile.rs",
         "spimonitor/controller.rs",
