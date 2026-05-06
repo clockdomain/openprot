@@ -14,10 +14,10 @@ pub use registers::{
     SPIPF_REG_SIZE,
 };
 pub use types::{
-    LockState, MonitorState, PrivilegeDirection, RegionPolicy, Result as SpiMonitorResult,
-    SpiMonitorError,
+    ExtMuxSel, LockState, MonitorState, PassthroughMode, PrivilegeDirection, PrivilegeOp,
+    RegionPolicy, Result as SpiMonitorResult, SpiMonitorError, ViolationLogEntry,
 };
-pub use policy::MonitorPolicy;
+pub use policy::{MonitorPolicy, MAX_CMD_SLOTS, MAX_REGION_SLOTS};
 pub use controller::{
     Configured, ConfiguredSpiMonitor, Locked, LockedSpiMonitor, SpiMonitor, Uninitialized,
     UninitSpiMonitor,

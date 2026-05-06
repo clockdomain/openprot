@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Built-in SPI monitor policy profiles.
+//!
+//! Profiles provide command allow-lists only. Region entries are platform
+//! policy and must be added by the caller via `MonitorPolicy::add_region`
+//! using the PFM or provisioned manifest for the specific device.
 
 use crate::spimonitor::policy::MonitorPolicy;
 

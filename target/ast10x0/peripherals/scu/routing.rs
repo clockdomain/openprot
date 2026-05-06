@@ -61,6 +61,23 @@ impl ScuRegisters {
         });
     }
 
+    /// Query the external mux signal for a SPI monitor instance.
+    #[must_use]
+    pub fn get_spim_ext_mux(&self, instance: SpiMonitorInstance) -> ScuExtMuxSelect {
+        let bit = self.regs().scu0f0().read();
+        let is_mux1 = match instance {
+            SpiMonitorInstance::Spim0 => bit.ext_mux_select_sig_of_spipf1().bit(),
+            SpiMonitorInstance::Spim1 => bit.ext_mux_select_sig_of_spipf2().bit(),
+            SpiMonitorInstance::Spim2 => bit.ext_mux_select_sig_of_spipf3().bit(),
+            SpiMonitorInstance::Spim3 => bit.ext_mux_select_sig_of_spipf4().bit(),
+        };
+        if is_mux1 {
+            ScuExtMuxSelect::Mux1
+        } else {
+            ScuExtMuxSelect::Mux0
+        }
+    }
+
     /// Enable or disable the SCU-controlled MISO multi-function pin for a SPI
     /// monitor instance.
     pub fn set_spim_miso_multi_func(&self, instance: SpiMonitorInstance, enable: bool) {
