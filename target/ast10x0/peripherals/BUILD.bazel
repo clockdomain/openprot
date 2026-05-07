@@ -17,6 +17,7 @@ rust_library(
         "scu/clock.rs",
         "scu/routing.rs",
         "scu/status.rs",
+        "scu/pinctrl.rs",
         "spimonitor/mod.rs",
         "spimonitor/registers.rs",
         "spimonitor/types.rs",
@@ -37,5 +38,8 @@ rust_library(
         "@rust_crates//:embedded-hal-nb",
         "@rust_crates//:embedded-io",
         "@rust_crates//:nb",
+    ],
+    proc_macro_deps = [
+        "@rust_crates//:paste",
     ],
 )

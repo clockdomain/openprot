@@ -9,8 +9,10 @@ pub mod reset;
 pub mod clock;
 pub mod routing;
 pub mod status;
+pub mod pinctrl;
 
 pub use registers::ScuRegisters;
+pub use pinctrl::PinctrlPin;
 pub use types::{
     ClockRegisterHalf, Result as ScuResult, ScuError, ScuExtMuxSelect, ScuRegisterHalf,
     SpiMonitorInstance, SpiMonitorPassthrough, SpiMonitorSource,
