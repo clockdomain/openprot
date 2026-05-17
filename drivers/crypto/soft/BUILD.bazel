@@ -1,0 +1,21 @@
+# Licensed under the Apache-2.0 license
+# SPDX-License-Identifier: Apache-2.0
+
+load("@rules_rust//rust:defs.bzl", "rust_library")
+
+rust_library(
+    name = "crypto_soft",
+    srcs = [
+        "src/lib.rs",
+    ],
+    edition = "2024",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//drivers/crypto/api:crypto_api",
+        "//drivers/crypto/traits:crypto_traits",
+        "@rust_crates//:aes",
+        "@rust_crates//:cipher",
+        "@rust_crates//:hmac",
+        "@rust_crates//:sha2",
+    ],
+)

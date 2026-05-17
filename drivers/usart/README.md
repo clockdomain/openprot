@@ -4,6 +4,29 @@ This document describes the architecture of the layered USART userspace driver
 under `drivers/usart/` and how it integrates with platform bindings in a
 target-agnostic way.
 
+## 0. Platform-agnostic boundary (GUARDRAIL — applies to every driver)
+
+**Anything outside `target/` is platform-agnostic. No exceptions.**
+
+This is a hard rule for *all* layered drivers under `drivers/`, not just USART:
+
+- Code, types, identifiers, doc comments, and Bazel targets under `drivers/`
+  (or anywhere outside a `target/<plat>/` tree) MUST NOT name a specific SoC,
+  vendor, silicon block, or peripheral instance. No `Hace`, `Sbc`, `Ast10x0`,
+  `Aspeed`, `Uart5`, MMIO addresses, or PAC/`*_peripherals` dependencies.
+- Name by **capability / role**, never by the part that implements it:
+  a "symmetric/hash engine" and a "public-key engine", not "HACE" and "SBC";
+  a `UsartBackend`, not an `Ast10x0UartBackend`.
+- All platform-specific knowledge — the binding from an agnostic capability to
+  a concrete block, MMIO maps, `system.json5`, PAC crates — lives **only** under
+  `target/<plat>/` (e.g. `target/<plat>/backend/<driver>`).
+- Smell test: if a name or `use` in a `drivers/` crate would have to change to
+  port to a different SoC, it is in the wrong layer. Move it under `target/`.
+
+Rationale: the `drivers/` libraries are the portable contract; a single
+vendor name leaking in silently couples every consumer to one SoC and defeats
+the per-target binding model (§5, §8).
+
 ## 1. Layer Overview
 
 ```

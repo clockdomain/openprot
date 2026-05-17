@@ -1,0 +1,106 @@
+// Licensed under the Apache-2.0 license
+// SPDX-License-Identifier: Apache-2.0
+
+// AST10x0 Crypto Service Configuration
+// ARM Cortex-M4 @ 200 MHz with 768KB SRAM (0x00000000 - 0x000BFFFF)
+// NOTE: AST10x0 does not support XIP - firmware executes from RAM.
+//
+// One crypto server process owns BOTH capability classes (sketch §1, §7):
+//   Symmetric -> HACE   (mapped below)
+//   PublicKey -> SBC    (compiling stub on this branch; not mapped — see TODO)
+// A single `crypto` IPC channel carries both classes; routing is by
+// header.engine inside dispatch_request, not at the transport (sketch §3.2).
+//
+// PMSAv7-Friendly Memory Layout (mirrors the usart test image):
+//   0x00000000 - 0x00000500: Vector table (1280 bytes)
+//   0x00000500 - 0x00020000: Kernel code (~126KB, ends at 128KB boundary)
+//   0x00020000 - 0x00060000: Crypto app flash (256KB)
+//   0x00060000 - 0x00080000: Kernel RAM (128KB)
+//   0x00080000 - 0x000A0000: App RAM (128KB)
+{
+    arch: {
+        type: "armv7m",
+        vector_table_start_address: 0x00000000,
+        vector_table_size_bytes: 1280,  // 0x500
+    },
+    kernel: {
+        flash_start_address: 0x00000500,  // After vector table
+        flash_size_bytes: 129792,         // ~126KB (ends at 0x00020000)
+        ram_start_address: 0x00060000,    // After all flash regions
+        ram_size_bytes: 131072,           // 128KB
+    },
+    apps: [
+        {
+            name: "crypto_server_bin",
+            flash_size_bytes: 131072,     // 128KB for server code
+            processes: [
+                {
+                    name: "crypto_server_process",
+                    ram_size_bytes: 65536,        // 64KB RAM
+                    objects: [
+                        {
+                            // The crypto runtime multiplexes its IPC channel(s)
+                            // through one wait group (sketch §6).
+                            name: "wg",
+                            type: "wait_group",
+                        },
+                        {
+                            // ONE crypto channel, both capability classes
+                            // (sketch §7). Server side of client→server.
+                            name: "crypto",
+                            type: "channel_handler",
+                        },
+                    ],
+                    memory_mappings: [
+                        {
+                            // AST1060 HACE (hash/HMAC/AES crypto engine).
+                            // Base 0x7e6d0000 from ast1060-pac/src/lib.rs:770
+                            //   pub type Hace =
+                            //       crate::Periph<hace::RegisterBlock, 0x7e6d_0000>;
+                            // (same MMIO base HaceRegisters::new_global() resolves
+                            //  via ast1060_pac::Hace::ptr()).
+                            name: "hace",
+                            type: "device",
+                            start_address: 0x7e6d0000,
+                            size_bytes: 0x1000,
+                        },
+                        // TODO(sbc): map the SBC (ECDSA/RSA) MMIO region when the
+                        // SBC port merges from ast10x0-ecdsa. On this branch the
+                        // PublicKeyBackend is a compiling stub (no MMIO), so only
+                        // HACE is mapped here (sketch §7; backend/crypto lib.rs).
+                    ],
+                    threads: [
+                        {
+                            name: "crypto_server_thread",
+                            kernel_stack_size_bytes: 4096,  // 4KB stack
+                        },
+                    ],
+                },
+            ],
+        },
+        {
+            name: "crypto_client_app",
+            flash_size_bytes: 65536,      // 64KB for client code
+            processes: [
+                {
+                    name: "crypto_client_process",
+                    ram_size_bytes: 32768,        // 32KB RAM
+                    objects: [
+                        {
+                            name: "crypto",
+                            type: "channel_initiator",
+                            handler_process: "crypto_server_process",
+                            handler_object_name: "crypto",
+                        },
+                    ],
+                    threads: [
+                        {
+                            name: "crypto_client_thread",
+                            kernel_stack_size_bytes: 2048,
+                        },
+                    ],
+                },
+            ],
+        },
+    ],
+}

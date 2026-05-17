@@ -12,7 +12,9 @@ three files is the normative artifact at
 all behavior claims below are grounded in that copy, read directly — not inferred
 from `aspeed-rust`. This is the normative reference because it is the model the
 deployed AST1060 firmware actually runs. See [zephyr-behavior.md](zephyr-behavior.md)
-for the consumer/streaming analysis.
+for the consumer/streaming analysis, and
+[crypto-consumers.md](crypto-consumers.md) for the cross-block consumer / use-case
+matrix (HACE + SBC).
 
 `aspeed-rust/src` (`hace_controller.rs`, `hash.rs`, `hash_owned.rs`, `hmac.rs`) is
 **informative, not normative** — a second port of the same hardware, useful for
