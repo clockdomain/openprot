@@ -1,0 +1,12 @@
+cfe94dc149ffa0af7e1af668a27f57eecf0cd1e9
+AspeedTech-BMC/zephyr @ cfe94dc149ffa0af7e1af668a27f57eecf0cd1e9
+drivers/crypto/{rsa_aspeed.c,rsa_aspeed_priv.h}
+Frozen 2026-05-17T03:09Z as the normative RSA parity reference (rsa goal.md authority).
+Authoritative because this is the model the deployed AST1060 firmware actually
+runs: the exact same pinned Zephyr revision already used as the HACE and ECDSA
+authorities (../../zephyr-reference/PINNED_COMMIT.txt) — one deployed Zephyr
+build supplies all three crypto drivers, and RSA shares the SBC public-key
+engine with ECDSA (goal.md ADR-5). Verified verbatim:
+sha256(rsa_aspeed.c)      = 1b73a05e2da9c93434a2f149162aefe48a10986fbbf6a039f02c13530f9c59af
+sha256(rsa_aspeed_priv.h) = b2f3114d068c690dbe37d6824f5d2f87645143424ad2e70bbfae65cc2775d980
+== `git show cfe94dc:drivers/crypto/rsa_aspeed.c` (and rsa_aspeed_priv.h).
