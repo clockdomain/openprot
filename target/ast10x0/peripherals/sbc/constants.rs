@@ -28,8 +28,8 @@ pub const TRIGGER_HOLD_NS: u32 = 5_000_000;
 ///
 /// P5-OPEN-A (goal.md §3) — decided value, single fix point. The normative
 /// Zephyr driver reads this from device-tree at runtime (no constant to
-/// copy); this is the *informative* `aspeed-rust` `ECDSA_SRAM_BASE`. **Not
+/// copy); this is the *informative* `aspeed-rust` `SBC_SRAM_BASE`. **Not
 /// proven** — validated by the Phase-6 KAT run (a wrong base → garbage
 /// operands → loud deterministic verdict mismatch). If a SoC/PAC source ever
 /// states otherwise, that source wins and only this line changes.
-pub const ECDSA_SRAM_BASE: usize = 0x7900_0000;
+pub const SBC_SRAM_BASE: usize = 0x7900_0000;

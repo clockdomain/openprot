@@ -7,7 +7,7 @@
 //! Boot Controller, exposed by `ast1060_pac` as the `secure` peripheral
 //! (`secure::RegisterBlock`, base `0x7e6f_2000`). `secure014`/`0b4`/`0bc` are
 //! PAC-named; the mode register `0x7c`, the curve-parameter window
-//! `0xa00–0xac0`, and the engine scratch-RAM (`ECDSA_SRAM_BASE`) are not
+//! `0xa00–0xac0`, and the engine scratch-RAM (`SBC_SRAM_BASE`) are not
 //! modelled by the PAC and are reached by raw confined offset access here and
 //! nowhere else (goal.md P5-OPEN-B).
 //!
@@ -20,7 +20,7 @@ use core::ptr::{read_volatile, write_volatile};
 
 use ast1060_pac as device;
 
-use super::constants::{ECDSA_SRAM_BASE, RESET_SETTLE_NS, TRIGGER_HOLD_NS};
+use super::constants::{SBC_SRAM_BASE, RESET_SETTLE_NS, TRIGGER_HOLD_NS};
 
 // Engine MMIO offsets (relative to the SBC `secure` base).
 const OFF_MODE: usize = 0x7c; // mode/gate word (PAC-unmodelled)
@@ -29,7 +29,7 @@ const PAR_GY: usize = 0xa40;
 const PAR_P: usize = 0xa80;
 const PAR_N: usize = 0xac0;
 
-// Engine SRAM offsets (relative to `ECDSA_SRAM_BASE`).
+// Engine SRAM offsets (relative to `SBC_SRAM_BASE`).
 const SR_GX: usize = 0x2000;
 const SR_GY: usize = 0x2040;
 const SR_QX: usize = 0x2080;
@@ -53,12 +53,12 @@ const STS_PASS: u32 = 1 << 21; // secure014 bit-21: verification passed
 /// threading (`!Send`/`!Sync`); it does not enforce exclusivity — that is
 /// delegated to the caller and the device/op layer above.
 #[derive(Copy, Clone)]
-pub struct EcdsaRegisters {
+pub struct SbcRegisters {
     ptr: *mut device::secure::RegisterBlock,
     _not_send: PhantomData<*mut ()>,
 }
 
-impl EcdsaRegisters {
+impl SbcRegisters {
     /// Create a register accessor from a raw SBC/ECDSA register block pointer.
     ///
     /// # Safety
@@ -103,9 +103,9 @@ impl EcdsaRegisters {
 
     #[inline]
     unsafe fn sram_wr(&self, off: usize, val: u32) {
-        // SAFETY: ECDSA_SRAM_BASE is the engine scratch region (P5-OPEN-A);
+        // SAFETY: SBC_SRAM_BASE is the engine scratch region (P5-OPEN-A);
         // `off` is a 32-bit-aligned operand slot < 0x2400.
-        unsafe { write_volatile((ECDSA_SRAM_BASE + off) as *mut u32, val) }
+        unsafe { write_volatile((SBC_SRAM_BASE + off) as *mut u32, val) }
     }
 
     /// Copy one 48-byte domain parameter from the engine MMIO window to SRAM.

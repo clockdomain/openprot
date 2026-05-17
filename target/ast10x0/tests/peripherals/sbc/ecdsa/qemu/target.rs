@@ -12,7 +12,7 @@
 #![no_std]
 #![no_main]
 
-use ast10x0_peripherals::ecdsa::{EcdsaDevice, EcdsaError, EcdsaOp};
+use ast10x0_peripherals::sbc::{SbcDevice, SbcError, SbcOp};
 use codegen as _;
 use console_backend::console_backend_write_all;
 use entry as _;
@@ -72,28 +72,28 @@ fn test_structural_reject() -> Result<(), &'static str> {
     if P384Signature::from_coordinates(nz, nz).is_err() {
         return Err("non-zero signature rejected");
     }
-    // Compile-time pin: the kinds the EcdsaError mapping targets still exist.
+    // Compile-time pin: the kinds the SbcError mapping targets still exist.
     let _ = (ErrorKind::InvalidPoint, ErrorKind::InvalidSignature);
     Ok(())
 }
 
 /// 3. D3 bounded-timeout positive test (goal.md §2.1 / D3 / §4.A). QEMU has
 /// no ECC engine, so `secure014` bit-20 never sets ⇒ `verify_raw` must
-/// exhaust the (small) budget and return `EcdsaError::Timeout`. Asserting
+/// exhaust the (small) budget and return `SbcError::Timeout`. Asserting
 /// that *is* the test of the lone intentional delta.
 fn test_d3_timeout() -> Result<(), &'static str> {
     let b = [0x11u8; 48];
     // SAFETY: the test owns the SBC singleton for its whole lifetime and is
-    // single-threaded — the non-reentrant `EcdsaDevice` contract holds.
+    // single-threaded — the non-reentrant `SbcDevice` contract holds.
     let mut dev = unsafe {
-        EcdsaDevice::new(ast1060_pac::Secure::ptr(), |_| core::hint::spin_loop())
+        SbcDevice::new(ast1060_pac::Secure::ptr(), |_| core::hint::spin_loop())
     }
     .with_timeout_polls(16);
     // SAFETY: no concurrent/reentrant ECDSA access in this test.
-    let mut op = unsafe { EcdsaOp::from_device(&mut dev) };
+    let mut op = unsafe { SbcOp::from_device(&mut dev) };
 
     match op.verify_raw(&b, &b, &b, &b, &b) {
-        Err(EcdsaError::Timeout) => Ok(()),
+        Err(SbcError::Timeout) => Ok(()),
         Ok(()) => Err("unexpected PASS on QEMU — is the ECC engine modelled now?"),
         Err(_) => Err("unexpected non-timeout error on QEMU"),
     }

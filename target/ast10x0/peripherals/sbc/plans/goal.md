@@ -1,5 +1,11 @@
 # ECDSA Behavioral Parity Goal (AST1060)
 
+*Scope: the **ECDSA-verify operation** of the `peripherals/sbc` SBC public-key
+engine (operation #1). RSA is operation #2 of the same hardware block — its
+own peripheral-parity-port with a separate goal doc & authority
+(`rsa_aspeed.c`); see ADR-5. The shared façade/device/op layer is common to
+both.*
+
 > **Status: Phases 0–5 done; code implemented; Phase 6 §4.A QEMU tests
 > PASSING; §4.B NIST KAT firmware IMPLEMENTED (builds, user-run on EVB).
 > Phase 8 ADR-3 remains; §4.B silicon run pending (user).**
@@ -7,7 +13,7 @@
 > (§Objective), deltas ledger built with the lone intentional delta discharged
 > (§2), three authorities separated (§2.3), skin/HAL ADRs recorded (§5), the
 > numbered plan written and P5-OPEN resolved (§3). **Code:** §3 items 1–6
-> implemented in `target/ast10x0/peripherals/ecdsa/` (façade §1.2 sequence,
+> implemented in `target/ast10x0/peripherals/sbc/` (façade §1.2 sequence,
 > 10 µs poll, `verify_raw`, thin `hal_impl` skin); builds clean under
 > `--config=virt_ast10x0` with `-D warnings`. **Parity is by-construction
 > only** (cited line-for-line vs `zephyr-reference/`) and **not executable on
@@ -18,10 +24,11 @@
 > user runs them on AST1060 silicon later** (also discharges P5-OPEN-A
 > behaviorally + budget tuning). P5-OPEN-A's *address* is corroborated by the
 > QEMU SoC memmap. **§4.A QEMU tests now implemented & green under
-> `--config=virt_ast10x0`** (`tests/peripherals/ecdsa/qemu/`). Remaining:
-> §4.B HW-tagged NIST KAT (user, on silicon — `tests/peripherals/ecdsa/evb/`),
-> then Phase 8 ADR-3. Work lives in `openprot-ecdsa` (branch
-> `ast10x0-ecdsa`).
+> `--config=virt_ast10x0`** (`tests/peripherals/sbc/ecdsa/qemu/`). Remaining:
+> §4.B HW-tagged NIST KAT (user, on silicon — `tests/peripherals/sbc/ecdsa/evb/`),
+> then Phase 8 ADR-3. **Peripheral renamed `ecdsa`→`sbc` (ADR-5): one SBC
+> engine; RSA is op #2, its own parity-port.** Work lives in `openprot-ecdsa`
+> (branch `ast10x0-ecdsa`).
 
 ## Objective
 
@@ -65,7 +72,7 @@ observable identity.
 
 Direct consequence for P1–P5 (§0.3), to be formalized in §2/Phase 3 under this
 standard:
-- **P4 (unbounded hang → bounded `poll_budget`/typed `EcdsaError::Timeout`):**
+- **P4 (unbounded hang → bounded `poll_budget`/typed `SbcError::Timeout`):**
   *intentional delta, keep the fix.* The authority's only divergent observable
   is the wedged-engine **fault** path (§1.5) — not reachable on any valid
   input; on every reachable input the verdict and sequence are identical. Same
@@ -262,7 +269,7 @@ status directly; coherency is handled by placement, not barriers.
 
 The absence of any timeout path (1.2 step 9) is the single most consequential
 behavioral fact for the port: the openprot device layer's bounded
-`poll_budget` → typed `EcdsaError::Timeout` is therefore a **deviation from
+`poll_budget` → typed `SbcError::Timeout` is therefore a **deviation from
 the authority's observable behavior**, to be classified in §2 (Phase 3) under
 the Phase 2 parity standard — exactly the HACE-D1 situation.
 
@@ -306,7 +313,7 @@ already committed in code is the wait policy (device.rs/op.rs/constants.rs).
 |----|----------------------------------------------------|----------------------|----------------|
 | **D1** | Trigger = **literal `2`** written to `ASPEED_ECDSA_CMD` (`0xbc`): `SEC_WR(2, ASPEED_ECDSA_CMD)` (`ecdsa_aspeed.c:110`) | `start_verify` must emit a 32-bit write of **value `2`** to engine offset `0xbc` | **Conformance (obligation).** Port target == authority. `aspeed-rust`'s `sec_boot_ecceng_trigger_reg().set_bit()` (bit-0 ⇒ value `1`) is the **rejected buggy informative form**. ⚠ See HZ1: the `ast1060_pac` `secure0bc` field accessor encodes the bit-0 form — the façade must write the raw value, not use that named field naively. |
 | **D2** | Settle delays in the sequence: post-reset `k_usleep(1000)` ≈ **1 ms** (`:59`); post-trigger hold `k_usleep(5000)` ≈ **5 ms** before `SEC_WR(0,0xbc)` (`:111-112`) | `start_verify` must preserve the same ordering with delays **≥ the authority's** (1 ms after reset; ~5 ms trigger hold) | **Conformance (obligation).** Observable engine-driving timing. `aspeed-rust`'s `delay_ns(5000)` (5 µs) for both is the rejected buggy form. Delays are *advisory minimums* per O5 — Phase 5 reproduces the authority's, not aspeed-rust's. |
-| **D3** | Completion wait is **unbounded**: `do { k_usleep(10); sts = SEC_RD(0x14); } while (!(sts & BIT(20)));` — 10 µs interval, **no timeout / no error exit**; a wedged engine hangs forever (`:114-117`) | Bounded `poll_budget` loop on the safe `verify_is_done()` predicate; on exhaustion → façade cleanup + typed `EcdsaError::Timeout` (`op.rs::wait_verify_done`); advisory yield = authority's **10 µs** | **THE LONE INTENTIONAL DELTA — keep the fix.** Reachability-traced & discharged below (§2.1). Identical to HACE-D1 in shape and justification. |
+| **D3** | Completion wait is **unbounded**: `do { k_usleep(10); sts = SEC_RD(0x14); } while (!(sts & BIT(20)));` — 10 µs interval, **no timeout / no error exit**; a wedged engine hangs forever (`:114-117`) | Bounded `poll_budget` loop on the safe `verify_is_done()` predicate; on exhaustion → façade cleanup + typed `SbcError::Timeout` (`op.rs::wait_verify_done`); advisory yield = authority's **10 µs** | **THE LONE INTENTIONAL DELTA — keep the fix.** Reachability-traced & discharged below (§2.1). Identical to HACE-D1 in shape and justification. |
 | **D4** | Result decode: after `BIT(20)`, `ret = SEC_RD(0x14)`; `ret & BIT(21)` ⇒ `0` (valid) else `-1` (invalid) (`:119-123`). **No engine teardown / status-clear on either reachable path.** | Port maps the same `BIT(20)`-then-`BIT(21)` decode to its verify result; `clear_status()` is invoked **only on the D3 timeout (fault) path**, never on the reachable valid/invalid paths | **Conformance.** Bit semantics identical. The extra `clear_status()` lives only on the unreachable wedged path (part of D3); on every reachable input the port performs the same status reads and no teardown, matching the authority. (`clear_status` body semantics: **OPEN — O8**, see §1.6.) |
 | **D5** | Single monolithic `aspeed_ecdsa_verify_trigger` with inline unbounded poll (`:46-124`) | Port splits into Confined-`unsafe` façade ops + Cooperative-Yield Bounded-Poll device/adapter (façade/device/op layers) | **Conformance (architectural, non-observable).** "Observable parity" governs register transactions + verdict, not code shape. The split changes neither the emitted MMIO/SRAM sequence (D1/D2) nor the verdict (D4); only D3's bounded-vs-unbounded poll is observable, and that is the declared intentional delta. |
 | **D6** | Consumer wires **verify only**, **P-384 only**, **48-byte SHA-384** operands; `query_hw_caps = NULL`; no sign/keygen (`ecdsa_aspeed.c:130-135,185-189`; middlelayer `:48-53`) | Port scope = P-384 verify only (§Objective, §0.2); no sign/keygen | **Out-of-scope by decision == conformance with the consumer contract.** Nothing the deployed consumer can reach is omitted. |
@@ -386,7 +393,7 @@ question and is satisfied separately.
    section `[P-384,SHA-384]`, all 15 records** (3 valid + 12 invalid:
    Message/R/S/Q changed). Vendored verbatim + pinned (URL, retrieval date,
    sha256 of full file and section) at
-   `tests/peripherals/ecdsa/evb/nist-reference/` (`PINNED.txt`); the device
+   `tests/peripherals/sbc/ecdsa/evb/nist-reference/` (`PINNED.txt`); the device
    table is generated to `evb/vectors.rs` (`Qx/Qy/R/S` verbatim NIST;
    `m = SHA-384(Msg)` computed at vendoring time, since NIST gives the raw
    message and the engine consumes the digest). Question: *"is the
@@ -426,7 +433,7 @@ not buried.**
   driver does *not* hardcode it — it reads it from the board device-tree at
   runtime (`ecdsa_aspeed.c:180,193`), so there is no normative *constant* to
   copy. The only concrete number available is the **informative** `aspeed-rust`
-  hardcode `ECDSA_SRAM_BASE = 0x7900_0000`. **Decision: adopt `0x7900_0000`**
+  hardcode `SBC_SRAM_BASE = 0x7900_0000`. **Decision: adopt `0x7900_0000`**
   as a named façade constant.
   *Status — CORROBORATED (address), behavioral validation HW-deferred.* The
   value is **independently corroborated** by the QEMU AST1060 SoC memmap:
@@ -492,10 +499,10 @@ not buried.**
 
 5. **Wire the bounded-poll op (`op.rs`).** Point `wait_verify_done()` at the
    real `verify_is_done()`; add result decode (`verify_passed()`); compose the
-   internal `verify(qx,qy,r,s,m) -> Result<(), EcdsaError>`:
+   internal `verify(qx,qy,r,s,m) -> Result<(), SbcError>`:
    `start_verify` → bounded poll → `Ok(())` if passed / `Err(VerificationFailed)`
    if done-but-not-passed / `Err(Timeout)`+`clear_status()` on budget
-   exhaustion (D3). Add `EcdsaError::VerificationFailed` (enum is
+   exhaustion (D3). Add `SbcError::VerificationFailed` (enum is
    `#[non_exhaustive]`; `Timeout` already present). Length/curve are guarded
    exactly as the authority (§1.3) — **no `r,s<n`/on-curve pre-check added**
    (observable parity: the authority does none; the engine produces the
@@ -507,7 +514,7 @@ not buried.**
    in its own module: extract operands from `&P384PublicKey`/`&P384Signature`
    via `zerocopy::IntoBytes::as_bytes()` (`#[repr(C)]` halves; the §4
    operand-order test pins this), take the SHA-384 digest bytes, call the
-   internal `verify` (item 5), map `EcdsaError` → `Self::Error`/`Error::kind()`.
+   internal `verify` (item 5), map `SbcError` → `Self::Error`/`Error::kind()`.
    No driver type becomes generic over or shaped by the trait.
    `Acceptance:` impl is ≤ ~20 lines of pure boundary translation; deleting
    `hal_impl.rs` leaves the internal driver fully compiling and usable
@@ -531,12 +538,12 @@ them later on silicon.** The three §2.3 authorities are gated as follows.
   a future HAL struct refactor cannot silently break parity via `as_bytes()`.
 - **D3 delta (positive test):** on QEMU the ECC engine is absent so
   `secure014` bit-20 never sets ⇒ `verify_raw` deterministically returns
-  `EcdsaError::Timeout`. Assert exactly that — it is a real positive test of
+  `SbcError::Timeout`. Assert exactly that — it is a real positive test of
   the bounded-poll/timeout path (the lone intentional delta), and the *only*
   end-to-end behavior QEMU can exercise.
 
 ### 4.B HARDWARE-ONLY — IMPLEMENTED, user-executed on silicon (not QEMU)
-> `tests/peripherals/ecdsa/evb/` — pw_kernel firmware, `hardware`-tagged +
+> `tests/peripherals/sbc/ecdsa/evb/` — pw_kernel firmware, `hardware`-tagged +
 > `qemu_enabled`-incompatible (excluded from `--config=virt_ast10x0`/CI per
 > ADR-4). Builds clean (`--config=k_ast1060_evb`); the **user runs it on an
 > AST1060 EVB**. One run satisfies all three of:
@@ -553,11 +560,11 @@ Until 4.B is run on hardware, behavioral parity remains **by-construction
 only** (cited line-for-line vs `zephyr-reference/`); this is stated, not
 hidden.
 
-**Status** (`target/ast10x0/tests/peripherals/ecdsa/`):
+**Status** (`target/ast10x0/tests/peripherals/sbc/ecdsa/`):
 - **`qemu/` (4.A) — IMPLEMENTED & PASSING.** pw_kernel `system_image_test`,
   `qemu_only`; green under `--config=virt_ast10x0`: operand-order `#[repr(C)]`
   pin, structural reject, and the D3 bounded-timeout positive test
-  (`verify_raw` → `EcdsaError::Timeout`, deterministic since QEMU has no ECC
+  (`verify_raw` → `SbcError::Timeout`, deterministic since QEMU has no ECC
   engine per ADR-4). `TEST_RESULT:PASS`.
 - **`evb/` (4.B) — scaffold only**, tagged `hardware` + `qemu_enabled`-
   incompatible (excluded from `--config=virt_ast10x0`/CI). NIST KAT / verdict
@@ -571,7 +578,7 @@ The port is architected against the **behavioral/parity authority** (§1) — th
 Confined-`unsafe` façade → Cooperative-Yield bounded-poll device. The
 `EcdsaVerify<P384>` impl is an **outer adapter layer only**: a dedicated thin
 boundary module that translates trait types ↔ the port's own plain types
-(byte arrays, `EcdsaError`), calls the port's internal verify, and maps the
+(byte arrays, `SbcError`), calls the port's internal verify, and maps the
 error via `Error::kind()`. The internal driver MUST be fully usable **without
 the trait** and MUST NOT be generic over or shaped by it (mirrors HACE:
 `digest.rs` wears the digest traits *over* the device; the device is not built
@@ -610,12 +617,40 @@ is an **OTP / secure-boot-status stub only**. Grounded:
 
 **Consequence:** running `verify_raw` on QEMU stores/ignores the register
 writes and the bounded poll spins to budget → deterministic
-`EcdsaError::Timeout`. The accept/reject **verdict is unreachable on QEMU**;
+`SbcError::Timeout`. The accept/reject **verdict is unreachable on QEMU**;
 behavioral parity & NIST-KAT correctness are **hardware-only** (§4.B). The
 SRAM base `0x7900_0000` is independently corroborated by the same QEMU SoC
 memmap (`aspeed_ast10x0.c:24`, `ASPEED_DEV_SECSRAM`) — address confirmed,
 behavior not (P5-OPEN-A). This is a Phase-7 *read-the-emulator-device-model*
 finding that reshaped Phase 6, not a code defect.
+
+### ADR-5 — One SBC engine: `peripherals/ecdsa` → `peripherals/sbc` (2026-05-16)
+ECDSA and RSA are **not separate peripherals** — they are two operations of
+one hardware block. Grounded in the pinned authority `rsa_aspeed.c @ cfe94dc`
+vs `ecdsa_aspeed.c @ cfe94dc`: both drive the same `secure` block
+(`0x7e6f_2000`) via identical `SEC_RD/SEC_WR`, the same scratch SECSRAM
+(`0x7900_0000`), the **same trigger register `0xbc`** (RSA writes `1`,
+`rsa_aspeed.c:76`; ECDSA writes `2`, `ecdsa_aspeed.c:110`), and the **same
+status register `0x14`** (RSA polls `BIT(4)` `rsa_aspeed.c:81`; ECDSA
+`BIT(20/21)`); Kconfig `ECDSA_ASPEED select RSA_ASPEED`.
+
+Decision: model the block as **one** Confined-`unsafe` MMIO façade.
+`peripherals/ecdsa` → **`peripherals/sbc`** (`git mv`, history preserved);
+engine-level types renamed `Ecdsa{Registers,Device,Op,Error}` →
+`Sbc{Registers,Device,Op,Error}`, `ECDSA_SRAM_BASE` → `SBC_SRAM_BASE`. The
+shared façade/device/op (cooperative-yield bounded-poll) is common; the
+ECDSA-verify operation (`verify_raw`, the `EcdsaVerify<P384>` `hal_impl`
+skin) and the future RSA operation are op-specific layers on top. Rejected:
+a second façade over the same block (duplicated `unsafe`, no shared
+non-reentrant/exclusivity contract — violates the Confined-`unsafe` MMIO
+Façade "one audited site per block" principle). Tests moved
+`tests/peripherals/ecdsa` → `tests/peripherals/sbc/ecdsa` (RSA tests will be
+`tests/peripherals/sbc/rsa`).
+
+**RSA is its own peripheral-parity-port:** separate goal doc under
+`plans/` (authority = pinned `rsa_aspeed.c`; correctness = NIST RSA KAT),
+**not** folded into this ECDSA goal. This document remains the ECDSA-operation
+parity record.
 
 ### ADR-3 — SW/HW selection & isolation
 `TODO (Phase 8)` — capture the SW/HW-selection and isolation constraints

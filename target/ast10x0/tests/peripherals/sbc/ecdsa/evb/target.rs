@@ -15,7 +15,7 @@
 
 mod vectors;
 
-use ast10x0_peripherals::ecdsa::{EcdsaDevice, EcdsaError, EcdsaOp};
+use ast10x0_peripherals::sbc::{SbcDevice, SbcError, SbcOp};
 use codegen as _;
 use console_backend::console_backend_write_all;
 use entry as _;
@@ -34,16 +34,16 @@ fn run_kat() -> Result<(), &'static str> {
     let mut failures: u32 = 0;
     for (i, v) in NIST_P384_SHA384_SIGVER.iter().enumerate() {
         // SAFETY: the test owns the SBC singleton for its whole lifetime and
-        // is single-threaded — the non-reentrant `EcdsaDevice` contract holds.
+        // is single-threaded — the non-reentrant `SbcDevice` contract holds.
         let mut dev =
-            unsafe { EcdsaDevice::new(ast1060_pac::Secure::ptr(), |_| core::hint::spin_loop()) };
+            unsafe { SbcDevice::new(ast1060_pac::Secure::ptr(), |_| core::hint::spin_loop()) };
         // SAFETY: no concurrent/reentrant ECDSA access in this test.
-        let mut op = unsafe { EcdsaOp::from_device(&mut dev) };
+        let mut op = unsafe { SbcOp::from_device(&mut dev) };
 
         let got = op.verify_raw(&v.qx, &v.qy, &v.r, &v.s, &v.m);
         let ok = matches!(
             (got, v.expect_valid),
-            (Ok(()), true) | (Err(EcdsaError::VerificationFailed), false)
+            (Ok(()), true) | (Err(SbcError::VerificationFailed), false)
         );
         let kind: &str = if v.expect_valid { "valid" } else { "invalid" };
         if ok {
@@ -57,8 +57,8 @@ fn run_kat() -> Result<(), &'static str> {
             failures += 1;
             let cause: &str = match got {
                 Ok(()) => "accepted; expected reject",
-                Err(EcdsaError::VerificationFailed) => "rejected; expected accept",
-                Err(EcdsaError::Timeout) => "engine timeout (wedged / wrong SRAM base?)",
+                Err(SbcError::VerificationFailed) => "rejected; expected accept",
+                Err(SbcError::Timeout) => "engine timeout (wedged / wrong SRAM base?)",
                 Err(_) => "unexpected error",
             };
             pw_log::error!(

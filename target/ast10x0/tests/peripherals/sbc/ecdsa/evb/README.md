@@ -34,7 +34,7 @@ AST1060_EVB_PI_HOST=<pi-host-or-ip> \
   bazel test --config=k_ast1060_evb \
     --nocache_test_results --test_output=streamed \
     --test_timeout=300 --curses=no --noshow_progress \
-    //target/ast10x0/tests/peripherals/ecdsa/evb:ecdsa_evb_kat_test
+    //target/ast10x0/tests/peripherals/sbc/ecdsa/evb:ecdsa_evb_kat_test
 ```
 
 Expected: `vec[i] valid|invalid (<note>): PASS` for all 15, then

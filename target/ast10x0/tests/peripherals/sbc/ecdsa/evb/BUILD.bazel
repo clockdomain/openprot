@@ -8,7 +8,7 @@
 # QEMU/CI; the QEMU SBC has no ECC engine (ADR-4). Run on an AST1060 EVB:
 #   AST1060_EVB_PI_HOST=<host> bazel test --config=k_ast1060_evb \
 #     --nocache_test_results --test_output=streamed \
-#     //target/ast10x0/tests/peripherals/ecdsa/evb:ecdsa_evb_kat_test
+#     //target/ast10x0/tests/peripherals/sbc/ecdsa/evb:ecdsa_evb_kat_test
 
 load("@pigweed//pw_kernel/tooling:system_image.bzl", "system_image", "system_image_test")
 load("@pigweed//pw_kernel/tooling:target_codegen.bzl", "target_codegen")

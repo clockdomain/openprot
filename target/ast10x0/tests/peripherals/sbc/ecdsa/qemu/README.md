@@ -30,7 +30,7 @@ here (impossible on QEMU; that lives in `../evb/`).
 bazel test --config=virt_ast10x0 \
   --nocache_test_results --test_output=streamed --test_timeout=180 \
   --curses=no --noshow_progress \
-  //target/ast10x0/tests/peripherals/ecdsa/qemu:ecdsa_qemu_test
+  //target/ast10x0/tests/peripherals/sbc/ecdsa/qemu:ecdsa_qemu_test
 ```
 
 Expected: `operand-order pin: PASS`, `structural reject: PASS`,

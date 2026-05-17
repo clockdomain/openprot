@@ -13,7 +13,7 @@ use openprot_hal_blocking::ecdsa::{Error as HalEcdsaError, ErrorKind};
 /// `peripheral-parity-port` workflow — hence `#[non_exhaustive]`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[non_exhaustive]
-pub enum EcdsaError {
+pub enum SbcError {
     /// Operation did not complete before the poll budget was exhausted
     /// (the D3 bounded-timeout path; goal.md §2.1).
     Timeout,
@@ -24,13 +24,13 @@ pub enum EcdsaError {
 
 /// Map to the generic HAL kind so the `hal_impl` skin can satisfy
 /// `ErrorType` (goal.md §2.3.3: the trait wants shape; this is the mapping).
-impl HalEcdsaError for EcdsaError {
+impl HalEcdsaError for SbcError {
     fn kind(&self) -> ErrorKind {
         match self {
             // Wedged engine / budget exhausted — retryable, like the
             // authority's `-EBUSY` exhaustion (mirrors the HAL doc example).
-            EcdsaError::Timeout => ErrorKind::Busy,
-            EcdsaError::VerificationFailed => ErrorKind::InvalidSignature,
+            SbcError::Timeout => ErrorKind::Busy,
+            SbcError::VerificationFailed => ErrorKind::InvalidSignature,
         }
     }
 }
