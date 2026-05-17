@@ -126,10 +126,11 @@ signature into a retryable transport error.)
 
 ### 3.6 Boot-time path
 DICE measured-boot and early secure-boot verify (the earliest consumers) run
-before user-space exists and **cannot RPC** a server that is not up yet — they
-take `crypto_soft` or a minimal early-boot driver instance, never
-`crypto_client`. The `crypto_traits` indirection (§3.3) is what makes that
-substitution invisible to the consumer.
+before user-space exists and **cannot RPC** a server that is not up yet. They
+take either pure-software `crypto_soft` **or the HW engine via
+`Client<LoopbackTransport>`** (in-process dispatch, no IPC) — see ADR-C5; never
+`crypto_client` over IPC. The bounded-`CryptoBackend` seam (§3.3, ADR-C3) is
+what makes that substitution invisible to the consumer.
 
 ### 3.7 ADR-C1 — IPC stays behind the trait; consumers never name a transport
 **Decided. Mirrors `services/mctp` (`mctp-api` traits + `IpcMctpClient` +
@@ -179,6 +180,71 @@ The class→block mapping exists in exactly one crate: the per-platform
 `crypto_backend`. Smell test: if a name in a `drivers/` crate would change to
 port to another SoC, it is in the wrong layer. (This ADR is why the first
 `crypto_api` scaffold's `Hace`/`Sbc` names were reverted.)
+
+### 3.9 ADR-C3 — reuse `openprot_hal_blocking`, bounded by one supertrait
+**Decided.** The bespoke `crypto_traits` `Digest/Mac/Cipher/Verify` are a
+duplicate of the repo's canonical crypto HAL (`openprot_hal_blocking`, already
+implemented by the HACE port) and are removed. But the HAL is a *general crypto
+framework*, overengineered for a driver seam (see ADR-C4). The driver therefore
+reuses **one bounded slice** of it, pinned in exactly one place:
+
+```
+pub trait CryptoBackend:
+      digest::scoped::DigestInit<Sha2_256> + …<Sha2_384> + …<Sha2_512>
+    + mac::scoped::MacInit<…>
+    + cipher::CipherInit<Ecb> + cipher::CipherInit<Cbc>
+    + ecdsa::EcdsaVerify<P384> {}
+// blanket impl; Stack<B: CryptoBackend> unchanged
+```
+
+Scope rules: **scoped API only** (never surface `owned::*`); **no** AEAD /
+stream / `CipherStatus` / rekey / keygen / sign / non-P384 curves. A single
+runtime-dispatch shim in `crypto_server` bridges the wire `u8` algo → the typed
+HAL call, absorbs `Digest<N>` (`[u32;N]`) ↔ `&[u8]`, and wraps the verify
+mismatch (ADR-C4). All HAL impedance lives in that one module.
+
+### 3.10 ADR-C4 — the HAL's overengineering is quarantined, not adopted
+**Decided (assessment-driven).** Flagged HAL smells, kept *behind* the ADR-C3
+seam, not propagated, and raised as upstream HAL tech-debt (separate from this
+driver): (1) duplicate `scoped` vs `owned` trait families; (2) `cipher.rs` is an
+~8-trait framework for what is ECB/CBC-128/256 here; (3) `ecdsa.rs` is a full
+multi-curve keygen/sign/verify stack for what is P-384-verify-only;
+(4) compile-time-algorithm typestate vs the driver's runtime dispatch;
+(5) `Digest<N>` is words not bytes; (6) **`EcdsaVerify::verify` returns
+`Result<(),Error>` — a failed signature is modelled as an error, violating
+§3.5.** The verify shim translates "invalid signature" → `Ok(false)`, real
+faults → `Err`; this reconciliation is mandatory and isolated.
+
+### 3.11 ADR-C5 — transport is a pluggable, whole-object-by-construction trait
+**Decided.** The trait seam already lets the *binary* hand a consumer an
+in-process backend directly (zero transport/marshalling — the efficient
+single-address-space path) **or** a cross-process client. Orthogonally, the
+client's transport itself is abstracted so the *same marshalling code* serves
+more than Pigweed IPC:
+
+```
+trait Transport { fn transact(&mut self, req: &[u8], resp: &mut [u8])
+                              -> Result<usize, TransportError>; }
+// crypto_client::Client<T: Transport> implements the ADR-C3 seam, transport-agnostic
+```
+
+`transact` is **inherently whole-object** (bytes in → bytes out, one shot) for
+*every* impl, so §3.1 "no streaming across the boundary" is enforced
+structurally by the signature, not by convention.
+
+Impls / priority:
+- **P1 — `IpcTransport`** (Pigweed channel; the production cross-process path).
+- **P2 — `LoopbackTransport` (testability, first-class, not deferred):** calls
+  `crypto_server::dispatch_request` directly against an in-process backend, so
+  the marshalling + protocol + backend path is host-testable with **no
+  kernel/QEMU**.
+- Later — other channels (shared-mem mailbox, etc.) as needed.
+
+This also corrects §3.6: the **boot-time HW path is `Client<LoopbackTransport>`
+(in-process dispatch), not forced pure-software `crypto_soft`.** Caution
+(anti-overbuild): `Transport` is *not* mandatory on every call — pure
+single-address-space still hands the backend trait object over directly; the
+abstraction earns its keep only for IPC, loopback-test, and future channels.
 
 ## 4. Wire protocol (`crypto_api::protocol`) — sketch
 
