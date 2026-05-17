@@ -41,9 +41,10 @@ so the pinned driver is the sole reference. Decided forks (Phase 2):
 - **Parity standard: same as digest** — observable byte-for-byte parity on
   every reachable input; keep correctness fixes for latent defects no reachable
   consumer triggers, recorded as intentional deltas.
-- **Surface in scope: AES-128 / AES-256, ECB and CBC, raw key only.**
-  Out of scope **by decision** (recorded in §2.3, not silently dropped):
-  CFB/OFB/CTR, AES-192, DES/3DES, and the OTP/secret-vault sideloaded-key path.
+- **Surface in scope: AES-128 / AES-256, ECB and CBC, raw key; plus the
+  OTP/secret-vault *select logic* (delta A6 — handle→register/cmd, mock-tested;
+  vault crypto E2E separated, §2.6).** Out of scope **by decision** (recorded
+  in §2.3, not silently dropped): CFB/OFB/CTR, AES-192, DES/3DES.
 - AES correctness authority is independent published **NIST AESAVS/CAVP KATs**
   (§2.4) — distinct from parity, exactly as RFC-4231 is for HMAC.
 
@@ -84,7 +85,11 @@ Completion = `hace1c.hash_intflag` re-asserts. Cleanup/idle = write `hace30 = 0`
 
 Single global `HashContext`, `#[repr(C, align(64))]`, in `.ram_nc`. SG descriptors,
 `buffer`, and `digest` are DMA targets. Exactly one operation in flight at any time
-across all API surfaces.
+across all API surfaces. The single `.ram_nc` static is the faithful analogue of
+Zephyr's per-symbol non-cacheable placement: `NON_CACHED_BSS_ALIGN16` is a linker
+section attribute on one driver-owned symbol, **not** a sub-allocation of a
+partitioned non-cacheable arena (no per-device carve-out exists) —
+[zephyr-behavior.md](zephyr-behavior.md) §4.3.
 
 ### 1.4 IV / endianness (AST1060)
 
@@ -367,11 +372,14 @@ rows below are about *framing / lifecycle / scope*, not the cipher transform.
 | A2 | CBC framing is **IV in-band**: encrypt prepends the 16-byte IV to the output (`out = IV ‖ CT`, `out_len = in_len + 16`; `hace_aspeed.c:186–191`); decrypt expects `in = IV ‖ CT` and skips the first 16 bytes (`:200–205`) | The openprot cipher trait carries the nonce/IV **separately** (`CipherInit::init(key, nonce, mode)`, see §2.4); the port maps `nonce → ctx[0..16]` and the ciphertext buffer is **just `CT`** (no in-band IV prefix/strip) | **Intentional delta (decided: follow the trait shape).** The AES-CBC *ciphertext bytes are byte-identical* to the driver (and to NIST CAVS) for the same key/IV — only the driver's in-band IV *framing convention* differs, an I/O wrapper, not the transform. Directly analogous to D4 (canonical-digest framing). Reachability: the openprot consumers drive the typed `cipher` trait with a separate `Nonce`; none expect a driver-style `IV ‖ CT` blob. A KAT asserts port `CT` == NIST `CT`. |
 | A3 | `aspeed_crypto_session_free` clears only `in_use`; the raw key in `ctx[16..]` and the IV in `ctx[0..16]` are **not zeroized** (`hace_aspeed.c:370–377`) | Port zeroizes the key/IV region of the context on session/op drop | **Intentional delta (decided: keep the fix; security).** Leaving key material resident in a `.ram_nc` DMA buffer on a RoT is a defect no consumer relies on; zeroizing changes no cipher output. Safer on every input; observable only as cleared scratch. |
 | A4 | `aspeed_aes_crypt` performs **no input-length / block-multiple validation**; `in_len` is passed to the engine as-is (`hace_aspeed.c:130–135`) | Port rejects non-16-byte-multiple `in_len` for ECB/CBC with a typed `InvalidInput` before programming the engine | **Intentional delta (decided: keep the fix; safety).** Adds a bound the C omits; cannot change output for any valid (block-aligned) input — the only reachable production case. Mirrors the SBC port's "Rust-side bound the C omits" deltas. |
-| A5 | Driver also wires **CFB/OFB/CTR** (via the CBC IV-prepend handlers, `hace_aspeed.c:325–356`), **AES-192** (`:294`), **DES/TDES** (`:272–281`), and an **OTP/secret-vault key** path (`SELECT_VAL_KEY_1/2`, `AES_KEY_FROM_OTP`, `hace_aspeed.c:114–128`, `hace_aspeed.h:193–199`) | Not implemented | **Out of scope by decision (Phase 2).** Not a defect — deliberately deferred. CFB/OFB/CTR-via-CBC-handler in particular is a behaviorally surprising path; if a later increment adds it, its parity classification is re-opened then. Recorded here so the omission is explicit, not silent. |
+| A5 | Driver also wires **CFB/OFB/CTR** (via the CBC IV-prepend handlers, `hace_aspeed.c:325–356`), **AES-192** (`:294`), and **DES/TDES** (`:272–281`) | Not implemented | **Out of scope by decision (Phase 2).** Not a defect — deliberately deferred. CFB/OFB/CTR-via-CBC-handler in particular is a behaviorally surprising path; if a later increment adds it, its parity classification is re-opened then. Recorded here so the omission is explicit, not silent. |
+| A6 | **OTP/secret-vault sideload-key** path: non-`CAP_RAW_KEY` keys are an opaque 1-byte handle → slot select `SELECT_VAL_KEY_1/2` (MMIO `sbase+0xc` bit 0) + `HACE_CMD_AES_KEY_FROM_OTP` (`BIT(24)`) OR'd into `cmd`; invalid id → `-EINVAL` (`hace_aspeed.c:113–128`, `hace_aspeed.h:16,193–199`) | **Split (decided 2026-05-16):** vault-*select logic* implemented & bit-exactly tested (handle → register/cmd, invalid-id error); vault *crypto E2E* not run here | **Parity re-opened for the select logic — in scope this increment.** The handle→register/command-word mapping is fully pinned and pure (no silicon): **ported and compile-verified** — asserted bit-for-bit vs. the frozen source by compile-time `const` assertions (`constants.rs`, checked every build; a wrong value is a hard compile error) plus named `#[cfg(test)]` cases. **Crypto E2E remains separated (OPEN ISSUE §2.6):** a vault key is non-software-visible by design (OTP), so no KAT oracle exists; end-to-end needs real HACE silicon + an out-of-band-provisioned slot (one-time/destructive), gated exactly like the AES KAT (§2.5). The vault path is also the principled resolution of A3 (no software-resident key) — recorded, deferred, not a defect. |
 
 A1/A3/A4 are the intentional deltas; A2 is framing-only (ciphertext identical);
-A5 is scoped-out. No row changes the AES *transform* output on any in-scope,
-reachable input — that is NIST-identical (§2.4).
+A5 (CFB/OFB/CTR, AES-192, DES/TDES) is scoped-out; A6 is **split** — vault-select
+logic in scope this increment, vault crypto E2E separated (§2.6). No row changes
+the AES *transform* output on any in-scope, reachable input — that is
+NIST-identical (§2.4).
 
 ### 2.4 AES correctness & interface authorities (separate by deliberate choice)
 
@@ -445,6 +453,47 @@ Consequences / decisions:
 - A QEMU-side option (out of this goal's scope, recorded for completeness):
   extend `aspeed_hace.c` to model the crypto path, or run against a vendor
   QEMU that does. Not undertaken here.
+
+### 2.6 OPEN ISSUE — vault-key crypto E2E needs silicon + OTP provisioning
+
+Status as of 2026-05-16 (decision: A6 split — see §2.3).
+
+Scope split, by decision:
+
+- **In scope this increment (testable now, no silicon):** the vault-*select
+  logic*. Everything the pinned authority specifies for the sideload path is
+  pure register/command logic — a `key_id` handle ∈ {1,2} → exact MMIO write at
+  `sbase+0xc` bit 0 (`SELECT_VAL_KEY_1/2`, `hace_aspeed.h:193–199`),
+  `HACE_CMD_AES_KEY_FROM_OTP` (`BIT(24)`, `hace_aspeed.h:16`) OR'd into `cmd`,
+  typed error on any other id (driver `-EINVAL`, `hace_aspeed.c:113–128`).
+  Ported and asserted **bit-for-bit against the frozen source by compile-time
+  `const` assertions** (`constants.rs`, checked on *every* build including
+  firmware — a wrong value is a hard compile error), plus named `#[cfg(test)]`
+  cases for the handle→typed-error mapping (§3 items 6–7) — true parity of
+  100 % of what the normative reference defines for this path. **Status: done,
+  compile-verified** (`bazelisk build --config=virt_ast10x0
+  //target/ast10x0/peripherals:peripherals`).
+- **Separated (this OPEN ISSUE):** vault *crypto end-to-end*. A vault key is
+  **non-software-visible by design** (resident in OTP; the caller holds only a
+  1-byte handle), so a classical KAT — known key → known ciphertext — is
+  **impossible**: no software oracle exists. The most an E2E can be is a
+  *differential* test on real silicon — `AES(vault=N, pt) == AES(raw=K, pt)`
+  with `K` provisioned out of band — and OTP provisioning is
+  one-time/destructive and board-specific.
+
+Consequences / decisions:
+
+- The select logic lands as normal parity work and is **verified** (mocked,
+  bit-exact). The vault crypto E2E is **blocked on real hardware + a
+  provisioned slot**, gated exactly like the AES NIST KAT (§2.5): no QEMU path
+  (the model is hash-only and would not hold OTP key state regardless).
+- A vault E2E harness, if later run, is **hardware-only + differential** (not a
+  KAT) and tagged so it does not run (and falsely fail) off-hardware —
+  mirroring `hace_aes_test` handling (§2.5). Pending that, it is a documented
+  deferral, not a regression.
+- This path is also the principled resolution of delta A3 (it removes
+  software-resident key material entirely). Recorded so the A3↔A6 relationship
+  is explicit; bringing E2E in later is sanctioned, not a re-litigation.
 
 ---
 
@@ -549,10 +598,21 @@ Consequences / decisions:
    - DMA discipline: context/`src`/`dst` are `.ram_nc` (no `cache_data_invd_all`
      needed — non-cached, mirrors the §1.3 HashContext placement and the same
      layout-sensitivity caution as §2.2).
+   - **Vault-select logic (delta A6, in scope — §2.3 / §2.6).** Add the
+     non-raw-key branch: a 1-byte slot handle → `SELECT_VAL_KEY_1/2` write at
+     crypto `sbase+0xc` bit 0 and `HACE_CMD_AES_KEY_FROM_OTP` (`BIT(24)`) OR'd
+     into `cmd`; invalid id → typed error (driver `-EINVAL`,
+     `hace_aspeed.c:113–128`, `hace_aspeed.h:16,193–199`). **Logic only** — no
+     OTP provisioning; crypto E2E is separated (§2.6).
    - Acceptance: AES-128 and AES-256, ECB and CBC, encrypt and decrypt produce
      the NIST AESAVS/CAVP KAT ciphertext/plaintext byte-for-byte; a second
      concurrent AES/hash op is a borrow-check error (delta A1); a
-     non-block-multiple input returns `InvalidInput` (delta A4).
+     non-block-multiple input returns `InvalidInput` (delta A4); the
+     vault-select branch computes the exact `SELECT_VAL_KEY_1/2` RMW value and
+     sets `AES_KEY_FROM_OTP`, and an invalid slot id returns the typed error
+     before any register write — asserted by compile-time `const` assertions
+     (delta A6, done/compile-verified); vault crypto E2E is out of this gate
+     (§2.6).
 
 7. **AES parity / KAT harness** (extend the QEMU `ast1030-evb` suite)
    - **Correctness gate**: NIST AESAVS/CAVP vectors for AES-128/256 ECB and CBC
@@ -570,6 +630,15 @@ Consequences / decisions:
    - A1/A3 need no divergence vector (structural / cleared-scratch); A1 is
      covered by a compile-fail doc-test if the harness has one, else asserted
      by construction. A5 (out of scope) gets no test.
+   - **Delta A6 test (in scope — done, compile-verified):** the select logic
+     is asserted bit-for-bit vs. the frozen source by **compile-time `const`
+     assertions** in `constants.rs` (slot handle 1/2 → exact
+     `SELECT_VAL_KEY_1/2` RMW value at `sbase+0xc`; `AES_KEY_FROM_OTP` set in
+     `cmd`; raw path never sets it) — checked on every build, a wrong value is
+     a hard compile error — plus named `#[cfg(test)]` cases for the
+     handle→typed-error mapping. Stronger than a runtime mock; needs no test
+     runner. Vault crypto E2E is hardware-only + differential and **not** in
+     this harness (§2.6).
 
 ## 4. Done criteria
 
@@ -595,8 +664,13 @@ Consequences / decisions:
   (structural exclusivity — AES routes through the one owned `HaceDevice`,
   overlap is a compile error), A3 (key/IV zeroized on drop), A4
   (non-block-multiple input → typed `InvalidInput`) each covered per §3 item 7;
-  A2 (no in-band IV framing) asserted ciphertext-identical to NIST. A5 surface
-  is out of scope by decision (§2.3) — its absence is not a failing criterion.
+  A2 (no in-band IV framing) asserted ciphertext-identical to NIST. Delta A6
+  (vault-select logic) is **in scope and done (compile-verified)**:
+  handle→register/cmd mapping bit-exact vs. the frozen source by compile-time
+  `const` assertions (every build), invalid id → typed error; the vault crypto
+  E2E is separated and hardware-gated (§2.6), not a failing criterion here. A5
+  surface is out of scope by decision (§2.3) — its absence
+  is not a failing criterion.
   Not gated by byte-parity with the driver's `IV ‖ CT` framing, by decision
   (A2); gated by NIST-correctness + §1.9 behavioral parity.
 

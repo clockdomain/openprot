@@ -183,6 +183,31 @@ Single `aspeed_hash_ctx`-equivalent: 2-entry SG list, `digest[64]`, `buffer`
 DMA-capable, coherent memory (the port's `.ram_nc`, 64-byte aligned). One op at a
 time (enforced upstream by the single static `hashParams`, §2).
 
+**Non-cacheable placement is per-symbol, not partitioned (source-verified,
+`hace_aspeed.c:40`).** The whole driver state is one symbol —
+`static struct aspeed_hace_drv_state hace_drv_state NON_CACHED_BSS_ALIGN16;` —
+so the SG list, `digest`, and `buffer` inherit non-cacheable placement *as a unit*
+from that single attribute. Zephyr does **not** partition the AST10x0 non-cacheable
+region across devices: there is no carve-out, quota, or allocator. The
+`NON_CACHED_BSS_ALIGN16` attribute (defined in the Aspeed SoC layer, *outside* the
+pinned subset) expands to a `.nocache.bss` section attribute; the linker aggregates
+**every** such symbol from **all** drivers into one contiguous `_nocache_ram`
+block, and one MPU region marks that block non-cacheable at boot. Inter-device
+isolation is a property of each driver owning distinct static symbols, not of the
+region being subdivided. **Port implication:** the port's single `.ram_nc`
+`HashContext`/`CryptoContext` static is the faithful analogue — one driver-owned
+symbol in the shared non-cached section, *not* a sub-allocation of a managed
+non-cacheable arena. No coordination obligation the port must reproduce.
+
+Coherency for **caller-supplied** buffers is handled separately, by explicit cache
+maintenance, *not* by placement: the SG entries point at `pkt->in_buf`
+(`hace_aspeed.c:484`), which is not in `.nocache`, and the driver issues
+`cache_data_invd_range(data->digest, 64)` (`:448`) / `cache_data_invd_all()` on the
+caller path. The port's design note that `.ram_nc` context/`src`/`dst` need no
+`cache_data_invd_all` (goal.md §1.9.1 / line 549) is consistent with this: the
+non-cached placement covers driver-owned DMA memory; caller buffers are the only
+ones needing maintenance, and the port keeps its DMA buffers driver-owned.
+
 ### 4.4 IV / endianness (AST1060, little-endian)
 
 - `begin_session` loads the algorithm IV into `digest`: each IV `u32` written in

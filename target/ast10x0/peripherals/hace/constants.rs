@@ -50,6 +50,96 @@ pub const AES_CMD_BASE: u32 = HACE_CMD_DES_SG_CTRL
     | HACE_CMD_AES_KEY_HW_EXP
     | HACE_CMD_AES_SELECT;
 
+// ----- AES OTP/secret-vault sideload-key select (delta A6) --------------
+//
+// Verbatim port of the `aspeed_aes_crypt` non-`CAP_RAW_KEY` branch and the
+// `SELECT_VAL_KEY_1/2` macros (`zephyr-reference/hace_aspeed.c:113-128`,
+// `hace_aspeed.h:16,193-199`; goal.md §2.3 delta A6 / §2.6). This is the
+// *select logic only* — pure, silicon-free, and the in-scope half of A6. The
+// vault crypto end-to-end is separated and hardware-gated (goal.md §2.6).
+
+/// `HACE_CMD_AES_KEY_FROM_OTP` — sources the AES key from OTP/the secret
+/// vault instead of the software context (`hace_aspeed.h:16`, `BIT(24)`).
+pub const HACE_CMD_AES_KEY_FROM_OTP: u32 = 1 << 24;
+
+/// Byte offset of the vault-key-select register from the crypto engine
+/// secure base (`sbase`): `SELECT_VAL_KEY_1/2` operate on `sbase + 0xc`
+/// (`hace_aspeed.h:194,198`). Resolving `sbase` to a real MMIO address is
+/// board/provisioning state — the hardware-gated seam, goal.md §2.6.
+pub const VAULT_KEY_SELECT_OFFSET: usize = 0xc;
+
+/// Which provisioned vault slot a key handle selects. The driver accepts a
+/// 1-byte handle: `1` → slot 1, `2` → slot 2, anything else → `-EINVAL`
+/// (`hace_aspeed.c:116-126`).
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum VaultKeySlot {
+    Slot1,
+    Slot2,
+}
+
+/// Decode the 1-byte vault key handle. `None` is the authority's `-EINVAL`
+/// (verbatim ladder: `if (key_id == 1) … else if (key_id == 2) … else …`,
+/// `hace_aspeed.c:116-126`). The caller maps `None` to the typed error,
+/// exactly where the C returns `-EINVAL`.
+#[inline]
+pub const fn decode_vault_key_id(key_id: u8) -> Option<VaultKeySlot> {
+    match key_id {
+        1 => Some(VaultKeySlot::Slot1),
+        2 => Some(VaultKeySlot::Slot2),
+        _ => None,
+    }
+}
+
+/// Read-modify-write applied to the `sbase + 0xc` vault-select register.
+///
+/// Verbatim port of the two macros — **including their deliberate
+/// asymmetry**, reproduced bit-for-bit, *not* "corrected" (parity discipline;
+/// goal.md §2.6):
+///
+/// - `SELECT_VAL_KEY_1`: `reg &= ~BIT(0)` — clear bit 0, preserve the rest
+///   (`hace_aspeed.h:194`).
+/// - `SELECT_VAL_KEY_2`: `reg &= BIT(0)` — keep *only* bit 0, clear all other
+///   bits (`hace_aspeed.h:198`). (Asymmetric vs. KEY_1 by the authority's own
+///   definition; preserved as a behavioral fact, not a bug to fix.)
+#[inline]
+pub const fn vault_select_rmw(slot: VaultKeySlot, cur: u32) -> u32 {
+    match slot {
+        VaultKeySlot::Slot1 => cur & !(1 << 0),
+        VaultKeySlot::Slot2 => cur & (1 << 0),
+    }
+}
+
+/// `data->cmd |= HACE_CMD_AES_KEY_FROM_OTP` (`hace_aspeed.c:127`): the
+/// command-word change the vault path makes on top of the session base cmd.
+#[inline]
+pub const fn aes_key_from_otp(base_cmd: u32) -> u32 {
+    base_cmd | HACE_CMD_AES_KEY_FROM_OTP
+}
+
+// Compile-time bit-exact parity vs. the frozen source — enforced on *every*
+// build (firmware included), not just under a test runner. These are the A6
+// select-logic acceptance assertions (goal.md §3 item 7).
+const _: () = {
+    // Handle decode ladder (hace_aspeed.c:116-126).
+    assert!(matches!(decode_vault_key_id(1), Some(VaultKeySlot::Slot1)));
+    assert!(matches!(decode_vault_key_id(2), Some(VaultKeySlot::Slot2)));
+    assert!(decode_vault_key_id(0).is_none());
+    assert!(decode_vault_key_id(3).is_none());
+    assert!(decode_vault_key_id(255).is_none());
+    // SELECT_VAL_KEY_1: clear bit0, preserve the rest (hace_aspeed.h:194).
+    assert!(vault_select_rmw(VaultKeySlot::Slot1, 0xFFFF_FFFF) == 0xFFFF_FFFE);
+    assert!(vault_select_rmw(VaultKeySlot::Slot1, 0x0000_0001) == 0x0000_0000);
+    assert!(vault_select_rmw(VaultKeySlot::Slot1, 0xA5A5_A5A4) == 0xA5A5_A5A4);
+    // SELECT_VAL_KEY_2: keep only bit0, clear everything else (hace_aspeed.h:198).
+    assert!(vault_select_rmw(VaultKeySlot::Slot2, 0xFFFF_FFFF) == 0x0000_0001);
+    assert!(vault_select_rmw(VaultKeySlot::Slot2, 0xA5A5_A5A4) == 0x0000_0000);
+    assert!(vault_select_rmw(VaultKeySlot::Slot2, 0x1234_5679) == 0x0000_0001);
+    // cmd |= AES_KEY_FROM_OTP sets exactly bit 24, nothing else.
+    assert!(aes_key_from_otp(0) == (1 << 24));
+    assert!(aes_key_from_otp(AES_CMD_BASE) == AES_CMD_BASE | (1 << 24));
+    assert!(AES_CMD_BASE & HACE_CMD_AES_KEY_FROM_OTP == 0); // raw path never sets it
+};
+
 pub const DEFAULT_POLL_BUDGET: u32 = 1_000_000;
 
 /// Suggested wait window, in nanoseconds, passed to the cooperative `yield_fn`

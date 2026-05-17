@@ -23,8 +23,12 @@
 //! argument, matching the openprot cipher trait shape); **A3** the key/IV
 //! region of the `.ram_nc` context is zeroized after every op and on drop;
 //! **A4** a non-block-multiple input is rejected with a typed `InvalidInput`
-//! before the engine is programmed (a bound the C omits). AES-192 and the
-//! OTP/secret-vault key path are out of scope by decision (delta A5).
+//! before the engine is programmed (a bound the C omits). CFB/OFB/CTR,
+//! AES-192, and DES/TDES are out of scope by decision (delta A5). The
+//! OTP/secret-vault sideload-key path is **split (delta A6)**: the
+//! handle→slot-select/command-word logic is in scope here (bit-exact vs. the
+//! frozen source by compile-time `const` assertions in `constants.rs`); the
+//! vault crypto end-to-end is separated and hardware-gated (goal.md §2.6).
 
 use super::constants::{
     AES_CMD_BASE, HACE_CMD_AES128, HACE_CMD_AES256, HACE_CMD_CBC, HACE_CMD_ECB, HACE_CMD_ENCRYPT,
@@ -221,6 +225,55 @@ impl<'a> AesCipher<'a> {
     ) -> Result<(), HaceError> {
         self.crypt(HACE_CMD_CBC, false, key, Some(iv), ct, pt)
     }
+
+    /// Select an OTP/secret-vault sideload key and return the OTP-augmented
+    /// command word — the verbatim port of the `aspeed_aes_crypt`
+    /// non-`CAP_RAW_KEY` branch (`zephyr-reference/hace_aspeed.c:113-128`;
+    /// delta A6, goal.md §2.3 / §2.6).
+    ///
+    /// Mirrors exactly:
+    /// ```c
+    /// } else { /*use secret vault key*/
+    ///     uint8_t key_id = *((uint8_t *)ctx->key.handle);
+    ///     if (key_id == 1)      SELECT_VAL_KEY_1(config->sbase);
+    ///     else if (key_id == 2) SELECT_VAL_KEY_2(config->sbase);
+    ///     else                  return -EINVAL;
+    ///     data->cmd |= HACE_CMD_AES_KEY_FROM_OTP;
+    /// }
+    /// ```
+    ///
+    /// No raw key bytes are touched (the key is resident in OTP). `base_cmd`
+    /// is the session command word (`AES_CMD_BASE | keylen | mode | dir`); the
+    /// returned cmd has `HACE_CMD_AES_KEY_FROM_OTP` OR'd in. An invalid handle
+    /// returns [`HaceError::InvalidInput`] (the C `-EINVAL`) **before** any
+    /// register write.
+    ///
+    /// In scope (goal.md §2.6): the handle decode, the `sbase + 0xc` select
+    /// RMW, and the cmd modification — all compile-time bit-exact vs. the
+    /// frozen source (see `constants.rs`). **Out of scope here:** issuing the
+    /// engine pass with a vault key (the crypto end-to-end) — it needs real
+    /// silicon and an out-of-band-provisioned OTP slot, separated and
+    /// hardware-gated (goal.md §2.6). `sbase` (the crypto-secure base, exactly
+    /// the C `config->sbase`) is therefore the documented hardware seam.
+    ///
+    /// # Safety
+    /// `sbase` must be the valid, exclusively-accessed crypto-secure base such
+    /// that `sbase + 0xc` is the vault-select register (the same
+    /// single-instance contract as the rest of this op).
+    pub unsafe fn select_vault_key(
+        &mut self,
+        sbase: usize,
+        key_id: u8,
+        base_cmd: u32,
+    ) -> Result<u32, HaceError> {
+        // Decode first; on an invalid handle return the typed error with no
+        // register write (verbatim: the C returns -EINVAL before SELECT_*).
+        let slot = super::constants::decode_vault_key_id(key_id)
+            .ok_or(HaceError::InvalidInput)?;
+        // SAFETY: caller upholds the `sbase` MMIO contract above.
+        unsafe { self.regs.select_vault_key(sbase, slot) };
+        Ok(super::constants::aes_key_from_otp(base_cmd))
+    }
 }
 
 impl Drop for AesCipher<'_> {
@@ -254,7 +307,9 @@ impl CipherMode for Cbc {}
 impl BlockCipherMode for Cbc {}
 
 /// Owned AES key for the trait skin (raw-key path only — the OTP/secret-vault
-/// path is out of scope, goal.md §2.3 delta A5). The size *is* the AES variant
+/// sideload-key path is delta A6: its select *logic* is ported on the raw
+/// driver core, but this trait skin carries raw key bytes only; vault crypto
+/// E2E is hardware-gated, goal.md §2.3/§2.6). The size *is* the AES variant
 /// (16 → AES-128, 32 → AES-256).
 #[derive(Clone)]
 pub enum AesKey {
@@ -382,5 +437,61 @@ impl<'a, const N: usize> CipherOp<Cbc> for AesOp<'a, N, Cbc> {
         self.core
             .cbc_decrypt(self.key.as_slice(), &self.iv, &ciphertext, &mut pt)?;
         Ok(pt)
+    }
+}
+
+#[cfg(test)]
+mod vault_select_tests {
+    //! Delta A6 select-logic acceptance (goal.md §3 item 7 / §2.6).
+    //!
+    //! The bit-exact parity vs. the frozen source is *already* enforced at
+    //! compile time by the `const _: () = { … }` block in `constants.rs`
+    //! (checked on every build, firmware included). These cases restate it in
+    //! named, readable form and additionally cover the handle → typed-error
+    //! mapping (`HaceError`, which the const block cannot compare).
+
+    use super::super::constants::{
+        aes_key_from_otp, decode_vault_key_id, vault_select_rmw, VaultKeySlot,
+        HACE_CMD_AES_KEY_FROM_OTP,
+    };
+    use super::super::error::HaceError;
+
+    /// Verbatim `if (key_id==1) … else if (==2) … else -EINVAL`
+    /// (`hace_aspeed.c:116-126`), including the call-site error mapping.
+    fn decode_or_einval(key_id: u8) -> Result<VaultKeySlot, HaceError> {
+        decode_vault_key_id(key_id).ok_or(HaceError::InvalidInput)
+    }
+
+    #[test]
+    fn handle_decode_matches_authority_ladder() {
+        assert_eq!(decode_or_einval(1), Ok(VaultKeySlot::Slot1));
+        assert_eq!(decode_or_einval(2), Ok(VaultKeySlot::Slot2));
+        for bad in [0u8, 3, 4, 16, 0x80, 0xFF] {
+            assert_eq!(decode_or_einval(bad), Err(HaceError::InvalidInput));
+        }
+    }
+
+    #[test]
+    fn select_val_key_1_clears_bit0_preserving_rest() {
+        // hace_aspeed.h:194 — reg &= ~BIT(0)
+        for cur in [0xFFFF_FFFFu32, 0x0000_0001, 0xA5A5_A5A5, 0x1234_5678] {
+            assert_eq!(vault_select_rmw(VaultKeySlot::Slot1, cur), cur & !1);
+        }
+    }
+
+    #[test]
+    fn select_val_key_2_keeps_only_bit0() {
+        // hace_aspeed.h:198 — reg &= BIT(0) (asymmetric vs. KEY_1, verbatim).
+        for cur in [0xFFFF_FFFFu32, 0x0000_0001, 0xA5A5_A5A4, 0x1234_5679] {
+            assert_eq!(vault_select_rmw(VaultKeySlot::Slot2, cur), cur & 1);
+        }
+    }
+
+    #[test]
+    fn otp_cmd_sets_exactly_bit24() {
+        assert_eq!(aes_key_from_otp(0), HACE_CMD_AES_KEY_FROM_OTP);
+        assert_eq!(HACE_CMD_AES_KEY_FROM_OTP, 1 << 24);
+        let base = 0x1234_5678u32;
+        assert_eq!(aes_key_from_otp(base) ^ base, HACE_CMD_AES_KEY_FROM_OTP);
     }
 }

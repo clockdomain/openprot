@@ -125,4 +125,38 @@ impl HaceRegisters {
         self.regs().hace0c().write(|w| unsafe { w.bits(data_len) });
         self.regs().hace10().write(|w| unsafe { w.bits(cmd) });
     }
+
+    /// Apply the OTP/secret-vault key-slot select read-modify-write to the
+    /// `sbase + 0xc` register (delta A6 — port of `SELECT_VAL_KEY_1/2`,
+    /// `zephyr-reference/hace_aspeed.h:193-199`; goal.md §2.6).
+    ///
+    /// The *transform* is the pure, compile-time-verified
+    /// [`vault_select_rmw`](super::constants::vault_select_rmw); this method is
+    /// only the confined volatile read-modify-write around it. The vault-select
+    /// register lives at the crypto engine *secure* base (`sbase`), a distinct
+    /// region from this HACE register block and **not** modeled in the PAC —
+    /// the caller supplies its MMIO cell pointer. Wiring that pointer to the
+    /// real `sbase + 0xc` (devicetree/provisioning) is the hardware-gated seam
+    /// (goal.md §2.6); the select *logic* is fully exercised regardless.
+    ///
+    /// # Safety
+    /// `sbase` must be the valid, exclusively-accessed crypto-secure base MMIO
+    /// address, such that `sbase + 0xc` is the vault-select register cell. As
+    /// with every HACE access, the caller upholds the engine's
+    /// single-instance/non-reentrancy contract.
+    #[inline]
+    pub(crate) unsafe fn select_vault_key(
+        &self,
+        sbase: usize,
+        slot: super::constants::VaultKeySlot,
+    ) {
+        // `SELECT_VAL_KEY_*(config->sbase)` operate on `sbase + 0xc`
+        // (hace_aspeed.h:194,198).
+        let vault_sel = (sbase + super::constants::VAULT_KEY_SELECT_OFFSET) as *mut u32;
+        // SAFETY: caller guarantees `sbase` is the valid crypto-secure base; the
+        // value written is the verbatim-ported authority RMW.
+        let cur = unsafe { core::ptr::read_volatile(vault_sel) };
+        let next = super::constants::vault_select_rmw(slot, cur);
+        unsafe { core::ptr::write_volatile(vault_sel, next) };
+    }
 }
