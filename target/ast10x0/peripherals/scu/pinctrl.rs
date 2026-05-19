@@ -540,6 +540,9 @@ paste! {
 /// I2C1 pin group: SCL/SDA mux selection on SCU414[30:31].
 pub const PINCTRL_I2C1: &[PinctrlPin] = &[PIN_SCU414_30, PIN_SCU414_31];
 
+/// I2C2 pin group: SCL/SDA mux selection on SCU418[0:1].
+pub const PINCTRL_I2C2: &[PinctrlPin] = &[PIN_SCU418_0, PIN_SCU418_1];
+
 /// Macro to safely modify a register bit (set or clear).
 macro_rules! modify_reg {
     ($reg:expr, $bit:expr, $clear:expr) => {{
