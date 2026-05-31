@@ -36,11 +36,34 @@ pub use openprot_lifecycle_api::{transition, Event, State};
 /// follow-up events, and external producers (commands, watchdog, IRQs) use it
 /// to inject events into the running machine.
 pub trait EventQueue {
+    /// Error returned when the queue's source/sink fails (e.g. a dead IPC
+    /// channel). An in-memory queue that cannot fail uses
+    /// [`core::convert::Infallible`].
+    type Error;
+
     /// Block until the next event is available and return it.
-    fn recv(&mut self) -> Event;
+    ///
+    /// Returns `Err` only on an unrecoverable source failure; transient
+    /// conditions (a spurious wakeup, an undecodable message) are handled
+    /// inside the implementation, which keeps blocking.
+    fn recv(&mut self) -> Result<Event, Self::Error>;
 
     /// Enqueue an event to be processed later.
-    fn push(&mut self, event: Event);
+    ///
+    /// Handlers use it to emit follow-up events, and external producers use it
+    /// to inject events into the running machine. Returns `Err` if the sink
+    /// cannot accept the event.
+    fn push(&mut self, event: Event) -> Result<(), Self::Error>;
+
+    /// Return the next already-available event without blocking, or `Ok(None)`
+    /// if none is ready.
+    ///
+    /// This is the non-blocking counterpart to [`recv`](Self::recv): it returns
+    /// events that have already been enqueued (notably handler follow-ups) but,
+    /// unlike `recv`, never blocks waiting on the external source. A driver uses
+    /// it to run the machine to quiescence — applying every queued follow-up —
+    /// and then go back to blocking in `recv` for the next external event.
+    fn try_recv(&mut self) -> Result<Option<Event>, Self::Error>;
 }
 
 /// Work performed by the state machine when it enters a state.
@@ -134,35 +157,40 @@ impl StateMachine {
     /// Process exactly one event: apply the transition, and if the state
     /// changed, run the new state's handler and enqueue any follow-up event.
     ///
-    /// Returns the state the machine is in after handling the event. Exposed
-    /// separately from [`run`](Self::run) so a single step can be asserted in
-    /// tests, and so a target that wants to interleave other work can drive the
-    /// machine cooperatively instead of surrendering its thread to `run`.
+    /// Returns the state the machine is in after handling the event, or the
+    /// queue's error if enqueuing a follow-up event failed. Exposed separately
+    /// from [`run`](Self::run) so a single step can be asserted in tests, and so
+    /// a target that wants to interleave other work can drive the machine
+    /// cooperatively instead of surrendering its thread to `run`.
     pub fn step<Q: EventQueue, A: Actions>(
         &mut self,
         event: Event,
         queue: &mut Q,
         actions: &mut A,
-    ) -> State {
+    ) -> Result<State, Q::Error> {
         if let Some(next) = transition(self.state, event) {
             self.state = next;
             if let Some(follow_up) = run_state(next, actions) {
-                queue.push(follow_up);
+                queue.push(follow_up)?;
             }
         }
-        self.state
+        Ok(self.state)
     }
 
     /// Seed the machine with [`Event::Start`] and process events forever.
     ///
     /// This is the direct analogue of `AspeedStateMachine()`: enqueue `Start`,
     /// then block on the queue and step on each event. It returns only if the
-    /// queue's `recv` ever returns (in practice it blocks forever on-target).
-    pub fn run<Q: EventQueue, A: Actions>(&mut self, queue: &mut Q, actions: &mut A) -> ! {
-        queue.push(Event::Start);
+    /// queue ever errors (a healthy queue blocks forever in `recv` on-target).
+    pub fn run<Q: EventQueue, A: Actions>(
+        &mut self,
+        queue: &mut Q,
+        actions: &mut A,
+    ) -> Result<core::convert::Infallible, Q::Error> {
+        queue.push(Event::Start)?;
         loop {
-            let event = queue.recv();
-            self.step(event, queue, actions);
+            let event = queue.recv()?;
+            self.step(event, queue, actions)?;
         }
     }
 }

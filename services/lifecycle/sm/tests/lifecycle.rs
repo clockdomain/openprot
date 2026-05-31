@@ -10,24 +10,35 @@
 //! recovery flow is asserted in software.
 
 use std::collections::VecDeque;
+use std::convert::Infallible;
 
 use openprot_lifecycle_sm::{Actions, Event, EventQueue, State, StateMachine};
 
 /// In-memory queue standing in for the `pw_kernel` IPC channel.
+///
+/// It never fails, so its [`EventQueue::Error`] is [`Infallible`]; the run-loop
+/// `?`-propagation is therefore a no-op here.
 #[derive(Default)]
 struct TestQueue {
     events: VecDeque<Event>,
 }
 
 impl EventQueue for TestQueue {
-    fn recv(&mut self) -> Event {
+    type Error = Infallible;
+
+    fn recv(&mut self) -> Result<Event, Infallible> {
         // In tests we never block: a missing event means the scripted flow is
         // complete, so panic loudly rather than hang.
-        self.events.pop_front().expect("queue drained unexpectedly")
+        Ok(self.events.pop_front().expect("queue drained unexpectedly"))
     }
 
-    fn push(&mut self, event: Event) {
+    fn push(&mut self, event: Event) -> Result<(), Infallible> {
         self.events.push_back(event);
+        Ok(())
+    }
+
+    fn try_recv(&mut self) -> Result<Option<Event>, Infallible> {
+        Ok(self.events.pop_front())
     }
 }
 
@@ -84,10 +95,10 @@ impl Actions for ScriptedActions {
 fn drive(actions: &mut ScriptedActions) -> (State, TestQueue) {
     let mut sm = StateMachine::new();
     let mut q = TestQueue::default();
-    q.push(Event::Start);
+    q.push(Event::Start).unwrap();
     while !q.is_empty() {
-        let ev = q.recv();
-        sm.step(ev, &mut q, actions);
+        let ev = q.recv().unwrap();
+        sm.step(ev, &mut q, actions).unwrap();
     }
     (sm.state(), q)
 }
@@ -154,10 +165,10 @@ fn verify_failure_recovers_then_revalidates() {
     let mut sm = StateMachine::new();
     let mut q = TestQueue::default();
     let mut actions = RecoverThenPass::default();
-    q.push(Event::Start);
+    q.push(Event::Start).unwrap();
     while !q.is_empty() {
-        let ev = q.recv();
-        sm.step(ev, &mut q, &mut actions);
+        let ev = q.recv().unwrap();
+        sm.step(ev, &mut q, &mut actions).unwrap();
     }
 
     assert_eq!(sm.state(), State::Runtime);
@@ -236,19 +247,20 @@ fn update_on_reset_then_runtime() {
 
     // Boot -> Init -> (InitDone) -> FirmwareVerify. Verify parks (no follow-up),
     // so the queue is empty and the machine awaits an external event.
-    sm.step(Event::Start, &mut q, &mut actions); // -> Init, pushes InitDone
-    sm.step(q.recv(), &mut q, &mut actions); // InitDone -> FirmwareVerify
+    sm.step(Event::Start, &mut q, &mut actions).unwrap(); // -> Init, pushes InitDone
+    let ev = q.recv().unwrap();
+    sm.step(ev, &mut q, &mut actions).unwrap(); // InitDone -> FirmwareVerify
     assert_eq!(sm.state(), State::FirmwareVerify);
     assert!(q.is_empty(), "verify parked awaiting update intent");
 
     // External producer injects the update intent.
-    sm.step(Event::UpdateRequested, &mut q, &mut actions); // -> FirmwareUpdate, pushes UpdateDone
+    sm.step(Event::UpdateRequested, &mut q, &mut actions).unwrap(); // -> FirmwareUpdate, pushes UpdateDone
     assert_eq!(sm.state(), State::FirmwareUpdate);
 
     // Drain: UpdateDone -> FirmwareVerify -> VerifyDone -> Runtime.
     while !q.is_empty() {
-        let ev = q.recv();
-        sm.step(ev, &mut q, &mut actions);
+        let ev = q.recv().unwrap();
+        sm.step(ev, &mut q, &mut actions).unwrap();
     }
     assert_eq!(sm.state(), State::Runtime);
 }

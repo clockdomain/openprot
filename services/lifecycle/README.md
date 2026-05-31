@@ -14,8 +14,11 @@ traits. It is `no_std` and `#![forbid(unsafe_code)]`.
 
 | Crate | Path | Role |
 |-------|------|------|
-| `openprot_lifecycle_api` | [`api/`](api/) | `State`, `Event`, and the pure `transition` function. Data + logic only — no loop, queue, or I/O. |
+| `openprot_lifecycle_api` | [`api/`](api/) | `State`, `Event`, the pure `transition` function, and the `wire` module (the stable byte codec for `Event`/`State`/`Request`/`Response`, shared by both channel ends). Data + logic only — no loop, queue, or I/O. |
 | `openprot_lifecycle_sm`  | [`sm/`](sm/)   | The run-loop (`StateMachine`) plus the `EventQueue` and `Actions` traits the loop is generic over. |
+| `openprot_lifecycle_server` | [`server/`](server/) | The lifecycle *service*: the server end of the channel. Decodes inbound `Request`s into `Event`s (via `api::wire`), drives the `StateMachine` to quiescence, and encodes `Response`s. Platform-independent and host-tested; mirrors `mctp/server`. |
+| `openprot_lifecycle_ipc` | [`ipc/`](ipc/) | On-target `EventQueue` backed by a `pw_kernel` channel; decodes inbound events with `api::wire`. Target-only. |
+| `openprot_ipc_event_queue` | [`//util/ipc_event_queue`](../../util/ipc_event_queue) | Generic, transport-free `PendingQueue`: the in-process buffer for handler follow-up events. No syscall dependency, so it builds and unit-tests on the host. |
 
 ## Design
 
@@ -73,17 +76,36 @@ real run-loop with an in-memory queue — no `pw_kernel`, no hardware.
 
 ## Wiring a target (e.g. ast1060)
 
-A target provides the two trait implementations and starts the loop:
+A target provides the queue and the `Actions` implementation, then starts the
+loop:
 
-1. Implement `EventQueue` over a `pw_kernel` IPC channel (`recv` blocks on the
-   channel; `push` enqueues). Inbound transports, the watchdog, and reset-detect
-   IRQs all `push` into the same channel.
+1. Use [`openprot_lifecycle_ipc::IpcEventQueue`](ipc/) for the `EventQueue`,
+   constructed from the lifecycle task's codegen channel handle. `recv` blocks
+   on the channel's `USER` signal (the `K_FOREVER` of the original
+   `k_fifo_get`), reads one event, and decodes it; `push` buffers a handler's
+   follow-up event in process and is drained ahead of the next channel read.
+   Inbound transports, the watchdog, and reset-detect IRQs are separate
+   producers that send encoded events into the same channel. (The crate is
+   generic underneath — `IpcEventQueue` composes the host-tested `WireCodec`
+   and `PendingQueue` from `//util/ipc_event_queue` with the `pw_kernel`
+   syscalls.)
 2. Implement `Actions`, where each handler calls the relevant OpenPRoT service /
    HAL trait and maps the result to a follow-up `Event`.
-3. `StateMachine::new().run(&mut queue, &mut actions)` in the lifecycle task.
+3. Choose a driver:
+   - **Service / request-driven** — construct
+     `LifecycleServer::new(actions)` and, in the task loop, read a request off
+     the channel, call `server.handle_request(&req, &mut resp, &mut queue)`,
+     and write `resp` back. The server decodes the request, runs the machine to
+     quiescence (draining handler follow-ups via `EventQueue::try_recv`), and
+     encodes the settled `State`. This is the `pw_kernel` server shape, the
+     analogue of `StreamServer::handle_ipc`.
+   - **Free-running** — `StateMachine::new().run(&mut queue, &mut actions)`.
+     `run` returns `Result<Infallible, _>`: a healthy queue blocks forever in
+     `recv`, returning only if the channel fails unrecoverably.
 
-The ast1060 backends live under `target/ast10x0/`; this crate intentionally has
-no dependency on them.
+The ast1060 backends live under `target/ast10x0/`; the core `api`/`sm` crates
+intentionally have no dependency on them. `IpcEventQueue` depends only on the
+`pw_kernel` `userspace` crate, so it is target-only but not target-specific.
 
 ## Status
 

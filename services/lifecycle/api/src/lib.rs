@@ -26,6 +26,8 @@
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod wire;
+
 /// States of the PRoT lifecycle.
 ///
 /// The graph mirrors the ASPEED PFR lifecycle but trimmed to what an OpenPRoT
