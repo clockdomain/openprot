@@ -1,17 +1,18 @@
 // Licensed under the Apache-2.0 license
 // SPDX-License-Identifier: Apache-2.0
 
-//! Type-erased ECDSA operation adapter: owns the bounded completion-poll loop.
+//! Type-erased SBC operation adapter: owns the bounded completion-poll loop,
+//! shared by ECDSA verify (`verify_raw`) and RSA modexp (`modexp`).
 //!
 //! Operation adapter of the *Cooperative-Yield Bounded-Poll Device* pattern.
 //! Built from an [`SbcDevice`](super::device::SbcDevice) by a borrow split
 //! — `regs`/`poll_budget` are `Copy`d out, `yield_fn` is reborrowed and
-//! **type-erased** to `&mut dyn FnMut(u32)` so this adapter (and any future
-//! verify/protocol impls on it) need not be generic over the strategy.
+//! **type-erased** to `&mut dyn FnMut(u32)` so this adapter need not be
+//! generic over the strategy.
 
 use super::constants::POLL_YIELD_NS;
 use super::error::SbcError;
-use super::registers::SbcRegisters;
+use super::registers::{RSA_MAX_INPUT, RSA_MAX_LEN, SbcRegisters};
 
 pub struct SbcOp<'a> {
     pub(crate) regs: SbcRegisters,
@@ -56,19 +57,15 @@ impl<'a> SbcOp<'a> {
     }
 
     /// Verify one P-384 signature. The internal operation entry — callable
-    /// **without** the HAL trait (ADR-1: the trait skin is `hal_impl`, not
-    /// this driver).
+    /// **without** the HAL trait.
     ///
-    /// Reproduces the authority sequence (goal.md §1.2): drive the engine via
-    /// the façade, bounded-poll `verify_is_done` with the injected strategy
-    /// once per non-completing poll, then decode `verify_passed`. The two
-    /// authority settle windows (D2) reuse the same type-erased strategy,
-    /// reborrowed for the pre-trigger phase.
+    /// Drives the engine via the façade, bounded-poll `verify_is_done` with
+    /// the injected strategy once per non-completing poll, then decode
+    /// `verify_passed`.
     ///
     /// - `Ok(())` — engine completed, signature valid (bit-20 ∧ bit-21).
     /// - `Err(VerificationFailed)` — completed, invalid (bit-20 ∧ ¬bit-21).
-    /// - `Err(Timeout)` — poll budget exhausted (D3 intentional delta:
-    ///   the authority would hang here); façade fault-cleanup then typed err.
+    /// - `Err(Timeout)` — poll budget exhausted; façade fault-cleanup then typed err.
     pub fn verify_raw(
         &mut self,
         qx: &[u8; 48],
@@ -93,5 +90,54 @@ impl<'a> SbcOp<'a> {
         }
         self.regs.clear_status(); // O8: fault-path only
         Err(SbcError::Timeout) // D3: typed, bounded failure
+    }
+
+    /// RSA modular exponentiation `out = data ^ exp mod modulus` — the
+    /// engine's raw primitive (verify/enc = public exponent `e`; sign/dec =
+    /// private `d`; the caller picks which). Internal, trait-free entry.
+    ///
+    /// `exp`/`modulus` are big-endian buffers ≥ `(bits+7)/8`; `data` is the
+    /// big-endian input (≤ 512 B). On success `out` (≥ `RSA_MAX_LEN`) gets
+    /// the big-endian result, leading zeros stripped; returns its length.
+    ///
+    /// - `Ok(n)` — completed; `out[..n]` is the result.
+    /// - `Err(InvalidInput)` — sizes out of range.
+    /// - `Err(Timeout)` — poll budget exhausted; scratch zeroed, then typed error.
+    pub fn modexp(
+        &mut self,
+        exp: &[u8],
+        modulus: &[u8],
+        data: &[u8],
+        e_bits: u32,
+        m_bits: u32,
+        out: &mut [u8],
+    ) -> Result<usize, SbcError> {
+        let e_len = (e_bits as usize).div_ceil(8);
+        let m_len = (m_bits as usize).div_ceil(8);
+        // Authority -EINVAL (`rsa_aspeed.c:54-57`) + Rust-side bound safety
+        // the C code omits (no out-of-bounds SECSRAM/buffer access).
+        if data.len() > RSA_MAX_INPUT
+            || e_len > RSA_MAX_INPUT
+            || m_len > RSA_MAX_INPUT
+            || exp.len() < e_len
+            || modulus.len() < m_len
+            || out.len() < RSA_MAX_LEN
+        {
+            return Err(SbcError::InvalidInput);
+        }
+
+        self.regs
+            .start_rsa(exp, modulus, data, e_len, m_len, e_bits, m_bits);
+
+        for _ in 0..self.poll_budget {
+            if self.regs.rsa_is_done() {
+                let n = self.regs.read_rsa_result(out);
+                self.regs.rsa_clear_scratch(); // authority :98 (reachable)
+                return Ok(n);
+            }
+            (self.yield_fn)(POLL_YIELD_NS); // injected strategy, advisory ns
+        }
+        self.regs.rsa_clear_scratch(); // R1 fault teardown (= authority zero)
+        Err(SbcError::Timeout) // R1: typed, bounded failure
     }
 }

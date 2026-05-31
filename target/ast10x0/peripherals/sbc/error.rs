@@ -1,29 +1,29 @@
 // Licensed under the Apache-2.0 license
 // SPDX-License-Identifier: Apache-2.0
 
-//! ECDSA error definitions.
+//! SBC public-key engine error definitions (shared by the ECDSA verify and
+//! RSA modexp operations).
 
 use openprot_hal_blocking::ecdsa::{Error as HalEcdsaError, ErrorKind};
 
-/// Errors surfaced by the ECDSA device layer.
-///
-/// Only the wait-policy failure (`Timeout`) is defined here: it is the typed,
-/// bounded failure of the cooperative-yield poll seam. The verify-result and
-/// input-validation variants land with the verify semantics under the
-/// `peripheral-parity-port` workflow — hence `#[non_exhaustive]`.
+/// Errors surfaced by the SBC engine layer. `#[non_exhaustive]`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SbcError {
-    /// Operation did not complete before the poll budget was exhausted
-    /// (the D3 bounded-timeout path; goal.md §2.1).
+    /// Operation did not complete before the poll budget was exhausted —
+    /// the bounded-timeout intentional delta (ECDSA D3 / RSA R1; the
+    /// authority would hang here instead).
     Timeout,
-    /// Engine completed and reported the signature as **invalid**
-    /// (`secure014` bit-20 set, bit-21 clear; goal.md §1.2 step 10).
+    /// ECDSA only: engine completed and reported the signature **invalid**
+    /// (`secure014` bit-20 set, bit-21 clear).
     VerificationFailed,
+    /// Caller-provided operand sizes are out of range — RSA input data
+    /// `> 512` bytes (authority `rsa_aspeed.c:54-57` `-EINVAL`), or an
+    /// exponent/modulus/output buffer too small for the stated bit lengths.
+    InvalidInput,
 }
 
-/// Map to the generic HAL kind so the `hal_impl` skin can satisfy
-/// `ErrorType` (goal.md §2.3.3: the trait wants shape; this is the mapping).
+/// Map to the generic HAL kind so the `hal_impl` skin can satisfy `ErrorType`.
 impl HalEcdsaError for SbcError {
     fn kind(&self) -> ErrorKind {
         match self {
@@ -31,6 +31,7 @@ impl HalEcdsaError for SbcError {
             // authority's `-EBUSY` exhaustion (mirrors the HAL doc example).
             SbcError::Timeout => ErrorKind::Busy,
             SbcError::VerificationFailed => ErrorKind::InvalidSignature,
+            SbcError::InvalidInput => ErrorKind::Other,
         }
     }
 }
