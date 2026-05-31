@@ -3,10 +3,11 @@
 
 load("@rules_rust//rust:defs.bzl", "rust_library")
 
-# The pw_kernel-backed EventQueue. Depends on the `userspace` syscall crate,
-# which only builds on-target (cortex-m / riscv), so this library is target-only
-# and has no host test; its host-testable logic (the Event wire codec) lives in
-# //services/lifecycle/api:wire and is covered by that crate's tests.
+# The pw_kernel-backed server binding: drives LifecycleServer over an IPC
+# channel (channel_read -> handle_request -> channel_respond). Depends on the
+# `userspace` syscall crate, which only builds on-target (cortex-m / riscv), so
+# this library is target-only and has no host test; its logic is exercised by
+# the host tests of the api and server crates.
 rust_library(
     name = "lifecycle_ipc",
     srcs = ["src/lib.rs"],
@@ -19,8 +20,7 @@ rust_library(
     target_compatible_with = ["@platforms//os:none"],
     visibility = ["//visibility:public"],
     deps = [
-        "//services/lifecycle/api:lifecycle_api",
-        "//services/lifecycle/sm:lifecycle_sm",
+        "//services/lifecycle/server:lifecycle_server",
         "//util/ipc_event_queue",
         "@pigweed//pw_kernel/userspace",
         "@pigweed//pw_status/rust:pw_status",
