@@ -61,11 +61,46 @@ rust_app(
     ],
 )
 
+rust_app(
+    name = "panic_test",
+    srcs = [
+        "panic_test.rs",
+    ],
+    codegen_crate_name = "panic_test_codegen",
+    edition = "2024",
+    system_config = "@pigweed//pw_kernel/target:system_config_file",
+    tags = ["kernel"],
+    visibility = ["//visibility:public"],
+    deps = [
+        "//hal/blocking/flash",
+        "//services/flash:client",
+        "//target/earlgrey/util",
+        "//util/error",
+        "//util/ipc",
+        "@pigweed//pw_kernel/syscall:syscall_user",
+        "@pigweed//pw_kernel/userspace",
+        "@pigweed//pw_log/rust:pw_log",
+        "@pigweed//pw_status/rust:pw_status",
+    ],
+)
+
 system_image(
     name = "flash",
     apps = [
         ":flash_server",
         ":flash_test",
+    ],
+    kernel = ":target",
+    platform = "//target/earlgrey",
+    system_config = ":system_config",
+    tags = ["kernel"],
+)
+
+system_image(
+    name = "flash_panic",
+    apps = [
+        ":flash_server",
+        ":panic_test",
     ],
     kernel = ":target",
     platform = "//target/earlgrey",
@@ -154,4 +189,48 @@ opentitan_test(
         "hardware",
     ],
     target = ":flash",
+)
+
+opentitan_test(
+    name = "flash_panic_verilator_test",
+    timeout = "eternal",
+    interface = "verilator",
+    tags = [
+        "nightly_test",
+        "verilator",
+    ],
+    target = ":flash_panic",
+)
+
+opentitan_test(
+    name = "flash_panic_hyper310_test",
+    ecdsa_key = FPGA_ECDSA_KEY,
+    interface = "hyper310",
+    tags = [
+        "hardware",
+        "hyper310",
+    ],
+    target = ":flash_panic",
+)
+
+opentitan_test(
+    name = "flash_panic_hyper340_test",
+    ecdsa_key = FPGA_ECDSA_KEY,
+    interface = "hyper340",
+    tags = [
+        "hardware",
+        "hyper340",
+    ],
+    target = ":flash_panic",
+)
+
+opentitan_test(
+    name = "flash_panic_silicon_test",
+    ecdsa_key = SILICON_ECDSA_KEY,
+    interface = "teacup",
+    tags = [
+        "earlgrey_silicon",
+        "hardware",
+    ],
+    target = ":flash_panic",
 )

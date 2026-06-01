@@ -82,5 +82,30 @@
       ],
     },
 
+    {
+      name: "panic_test",
+      flash_size_bytes: 16384,
+      processes: [
+        {
+          name: "panic_test",
+          ram_size_bytes: 6144,
+          objects: [
+            {
+              name: "flash_service",
+              type: "channel_initiator",
+              handler_process: "flash_server",
+              handler_object_name: "flash_service",
+            },
+          ],
+          threads: [
+            {
+              name: "panic_test_thread",
+              kernel_stack_size_bytes: 2048,
+            },
+          ],
+        },
+      ],
+    },
+
   ],
 }

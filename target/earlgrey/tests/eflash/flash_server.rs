@@ -21,14 +21,17 @@ struct FlashCtrlInterrupt;
 impl Blocking for FlashCtrlInterrupt {
     fn wait_for_notification(&self) {
         loop {
-            let w = syscall::object_wait(
+            match syscall::object_wait(
                 handle::FLASH_INTERRUPTS,
                 signals::FLASH_CTRL_OP_DONE,
                 Instant::MAX,
-            )
-            .unwrap();
-            if w.pending_signals.contains(signals::FLASH_CTRL_OP_DONE) {
-                break;
+            ) {
+                Ok(w) => {
+                    if w.pending_signals.contains(signals::FLASH_CTRL_OP_DONE) {
+                        break;
+                    }
+                }
+                Err(_) => continue,
             }
         }
         let _ = syscall::interrupt_ack(handle::FLASH_INTERRUPTS, signals::FLASH_CTRL_OP_DONE);

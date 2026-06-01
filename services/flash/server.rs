@@ -85,7 +85,7 @@ impl<TFlash: Flash> FlashIpcServer<TFlash> {
             return Err(error::IPC_ERROR_BAD_REQ_LEN);
         }
         let (op_status, reqrsp) = data.split_at_mut(4);
-        let opcode = Opcode::read_from_bytes(op_status).unwrap();
+        let opcode = Opcode::read_from_bytes(op_status).map_err(|_| error::IPC_ERROR_BAD_REQ_LEN)?;
         let len = match self.handle_op(opcode, reqrsp) {
             Ok(result) => {
                 op_status.copy_from_slice((0u32).as_bytes());
