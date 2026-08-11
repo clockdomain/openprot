@@ -11,7 +11,7 @@
 #![no_main]
 #![no_std]
 
-use app_test_timer::{handle, signals};
+use app_test_timer::{constants, handle, signals};
 use openprot_orchestrator_sm::ComponentId;
 use openprot_orchestrator_timer::{Expired, TimerManager};
 use pw_status::{Error, Result};
@@ -126,9 +126,56 @@ fn scenario_rearm_replaces() -> Result<()> {
     Ok(())
 }
 
+/// Scenario 3: arm Boot(C0)@+500ms, then fire the test IRQ. object_wait must
+/// return Ok (event beat the deadline); the "component reported in" analogue
+/// then cancels the watchdog and nothing is left armed. The trigger is issued
+/// before the wait — interrupt objects latch the pending signal, so this does
+/// not race.
+fn scenario_cancel_via_event() -> Result<()> {
+    pw_log::info!("scenario 3: cancel via event");
+    let mut tm = Tm::new();
+    let t0 = SystemClock::now();
+    tm.arm_boot(C0, t0 + Duration::from_millis(500))
+        .map_err(|_| Error::ResourceExhausted)?;
+
+    syscall::debug_trigger_interrupt(constants::TEST_IRQ)?;
+
+    let deadline = tm.next_deadline().ok_or(Error::Internal)?;
+    let wait = match syscall::object_wait(handle::TIMER_IRQ, signals::TEST_IRQ, deadline) {
+        Ok(wait) => wait,
+        Err(Error::DeadlineExceeded) => {
+            pw_log::error!("scenario 3: deadline fired although the event was pending");
+            return Err(Error::Internal);
+        }
+        Err(e) => return Err(e),
+    };
+    if !wait.pending_signals.contains(signals::TEST_IRQ) {
+        pw_log::error!("scenario 3: woke without TEST_IRQ pending");
+        return Err(Error::Internal);
+    }
+    syscall::interrupt_ack(handle::TIMER_IRQ, signals::TEST_IRQ)?;
+
+    if SystemClock::now() >= t0 + Duration::from_millis(500) {
+        pw_log::error!("scenario 3: event did not beat the 500ms deadline");
+        return Err(Error::Internal);
+    }
+    tm.cancel_boot(C0);
+    if tm.next_deadline().is_some() {
+        pw_log::error!("scenario 3: deadline still armed after cancel");
+        return Err(Error::Internal);
+    }
+    if tm.poll(SystemClock::now()).is_some() {
+        pw_log::error!("scenario 3: cancelled watchdog fired");
+        return Err(Error::Internal);
+    }
+    pw_log::info!("scenario 3: PASS");
+    Ok(())
+}
+
 fn run_test() -> Result<()> {
     scenario_ordered_expiry()?;
     scenario_rearm_replaces()?;
+    scenario_cancel_via_event()?;
     Ok(())
 }
 
