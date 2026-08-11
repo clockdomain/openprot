@@ -83,8 +83,52 @@ fn scenario_ordered_expiry() -> Result<()> {
     Ok(())
 }
 
+/// Scenario 2: arm Boot(C0)@+30ms then immediately re-arm @+80ms. The 30 ms
+/// deadline must be gone: the single wait must run to >= 80 ms and yield
+/// exactly one Boot(C0). (If the re-arm stacked, next_deadline would be the
+/// 30 ms entry and the elapsed-time check below would fail.)
+fn scenario_rearm_replaces() -> Result<()> {
+    pw_log::info!("scenario 2: re-arm replaces");
+    let mut tm = Tm::new();
+    let t0 = SystemClock::now();
+    tm.arm_boot(C0, t0 + Duration::from_millis(30))
+        .map_err(|_| Error::ResourceExhausted)?;
+    tm.arm_boot(C0, t0 + Duration::from_millis(80))
+        .map_err(|_| Error::ResourceExhausted)?;
+
+    let deadline = tm.next_deadline().ok_or(Error::Internal)?;
+    match syscall::object_wait(handle::TIMER_IRQ, signals::TEST_IRQ, deadline) {
+        Err(Error::DeadlineExceeded) => {}
+        Ok(_) => {
+            pw_log::error!("scenario 2: unexpected event wakeup");
+            return Err(Error::Internal);
+        }
+        Err(e) => return Err(e),
+    }
+
+    let now = SystemClock::now();
+    if now < t0 + Duration::from_millis(80) {
+        pw_log::error!("scenario 2: woke before the replaced 80ms deadline");
+        return Err(Error::Internal);
+    }
+    match tm.poll(now) {
+        Some(Expired::Boot(id)) if id == C0 => {}
+        _ => {
+            pw_log::error!("scenario 2: expected exactly Boot(C0)");
+            return Err(Error::Internal);
+        }
+    }
+    if tm.poll(SystemClock::now()).is_some() || tm.next_deadline().is_some() {
+        pw_log::error!("scenario 2: stacked entry survived the re-arm");
+        return Err(Error::Internal);
+    }
+    pw_log::info!("scenario 2: PASS");
+    Ok(())
+}
+
 fn run_test() -> Result<()> {
     scenario_ordered_expiry()?;
+    scenario_rearm_replaces()?;
     Ok(())
 }
 
