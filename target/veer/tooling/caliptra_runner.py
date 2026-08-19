@@ -119,6 +119,16 @@ def load_and_run(
 ) -> list[str]:
     """Prepare arguments to load an image into a board and spawn a console."""
     if interface == "emulator":
+        # The --rom-size/--sram-size/etc. values below must match
+        # caliptra-mcu-sw's own EMULATOR_MEMORY_MAP (the bus's addressable
+        # window for each region), not just mcu_rom.bin's/the linker
+        # script's idea of the region size -- see
+        # platforms/emulator/config/src/lib.rs in caliptra-mcu-sw at the
+        # pinned SHA (third_party/caliptra/versions.bzl's caliptra_mcu_sw
+        # entry). A CLI value smaller than the linker script's region lets
+        # the guest link/boot fine but reads past the CLI's declared window
+        # as unmapped/zero at runtime, which is silent (no build error, no
+        # panic) and was the root cause of a whole-suite hang here before.
         cmd = [
             _EMULATOR,
             f"--rom={_MCU_ROM}",
@@ -127,11 +137,11 @@ def load_and_run(
             f"--caliptra-firmware={_CPTRA_FIRMWARE}",
             "--i3c-port=65534",
             "--rom-offset=0x80000000",
-            "--rom-size=0x8000",
+            "--rom-size=0x10000",  # EMULATOR_MEMORY_MAP.rom_size = 64 * 1024
             "--dccm-offset=0x50000000",
             "--dccm-size=0x4000",
             "--sram-offset=0x40000000",
-            "--sram-size=0x80000",
+            "--sram-size=0x100000",  # EMULATOR_MEMORY_MAP.sram_size = 1024 * 1024
             "--pic-offset=0x60000000",
             "--i3c-offset=0x20004000",
             "--i3c-size=0x1000",
