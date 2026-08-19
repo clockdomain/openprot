@@ -83,3 +83,19 @@ rv32i = { git = "https://github.com/tock/tock.git", rev = "release-2.2" }
 ufmt = { git = "https://github.com/korran/ufmt.git", rev = "1d0743c1ffffc68bc05ca8eeb81c166192863f33", features = ["inline"] }
 ufmt-write = { git = "https://github.com/korran/ufmt.git", rev = "1d0743c1ffffc68bc05ca8eeb81c166192863f33" }
 ufmt-macros = { git = "https://github.com/korran/ufmt.git", rev = "1d0743c1ffffc68bc05ca8eeb81c166192863f33" }
+
+# caliptra-dpe (bumped above to cf3224c4...) carries its own transitive pin on
+# caliptra-cfi-derive/caliptra-cfi-lib from caliptra-cfi.git, at a different rev
+# than either our direct caliptra-cfi-derive/-lib (sourced in-tree from
+# caliptra-sw's cfi/derive, cfi/lib) or our caliptra-cfi-derive-git/-lib-git
+# entries above. Three same-name-same-version PackageIds from three sources
+# make cargo-bazel's {name}-{version} repository-naming scheme collide and
+# collapse the two caliptra-cfi.git-sourced entries into a single, internally
+# inconsistent generated git_repository() call (mismatched remote/commit vs.
+# strip_prefix), which then fails to fetch. Redirect dpe's transitive pin onto
+# caliptra-sw's in-tree cfi/derive, cfi/lib so it resolves to the *same*
+# PackageId as our own direct caliptra-cfi-derive/-lib entries above, leaving
+# only two sources overall (down from three) and no collision.
+[patch."https://github.com/chipsalliance/caliptra-cfi"]
+caliptra-cfi-derive = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217" }
+caliptra-cfi-lib = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217" }
