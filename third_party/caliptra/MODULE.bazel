@@ -55,7 +55,7 @@ crate.annotation(
 # pldm-common upstream has `mismatched_lifetime_syntaxes` occurrences that
 # trip a lint in our toolchain.
 crate.annotation(
-    crate = "pldm-common",
+    crate = "caliptra-mcu-pldm-common",
     repositories = ["rust_caliptra_crates_host"],
     rustc_flags = [
         "-A",
