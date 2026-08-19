@@ -14,13 +14,13 @@ package(default_visibility = ["//visibility:public"])
 
 # Local caliptra_emu_bus / caliptra_emu_cpu / caliptra_emu_periph / caliptra_emu_derive:
 # these sw-emulator host libraries mix deps from both crate_universe workspaces —
-# caliptra-emu-types lives in @rust_caliptra_crates_host, while ureg only exists in
-# @rust_caliptra_crates (no host-workspace entry, since ureg is the register
-# codegen library for embedded caliptra). Migrating the emu chain to crate_universe
-# would force every dep into one workspace and produce TypeId mismatches at the
-# trait boundaries where emu-bus types meet ureg/registers types (two rlibs of the
-# same source, different workspace-qualified names). Hand-written rust_library
-# wrappers let us thread the cross-workspace mix explicitly.
+# caliptra-emu-types lives in @rust_caliptra_crates_host, while caliptra-ureg only
+# exists in @rust_caliptra_crates (no host-workspace entry, since caliptra-ureg is
+# the register codegen library for embedded caliptra). Migrating the emu chain to
+# crate_universe would force every dep into one workspace and produce TypeId
+# mismatches at the trait boundaries where emu-bus types meet ureg/registers types
+# (two rlibs of the same source, different workspace-qualified names). Hand-written
+# rust_library wrappers let us thread the cross-workspace mix explicitly.
 
 rust_library(
     name = "caliptra_emu_bus",
@@ -30,7 +30,7 @@ rust_library(
     edition = "2021",
     deps = [
         "//third_party/caliptra:crate_tock-registers",
-        "@rust_caliptra_crates//:ureg",
+        "@rust_caliptra_crates//:caliptra-ureg",
         "@rust_caliptra_crates_host//:caliptra-emu-types",
     ],
 )
@@ -135,10 +135,10 @@ rust_library(
         "//third_party/caliptra:crate_serde",
         "//third_party/caliptra:crate_zerocopy",
         "@rust_caliptra_crates_host//:anyhow",
-        "@rust_caliptra_crates_host//:caliptra-api-types",
         "@rust_caliptra_crates_host//:caliptra-image-types",
         "@rust_caliptra_crates_host//:caliptra-lms-types",
         "@rust_caliptra_crates_host//:fips204",
+        "@rust_caliptra_crates_host//:p384",
         "@rust_caliptra_crates_host//:rand",
     ],
 )
@@ -172,7 +172,7 @@ rust_library(
     edition = "2021",
     deps = [
         ":caliptra_image_gen",
-        "@rust_caliptra_crates_host//:caliptra-api-types",
+        "//third_party/caliptra:crate_zerocopy",
         "@rust_caliptra_crates_host//:caliptra-image-types",
         "@rust_caliptra_crates_host//:caliptra-lms-types",
     ],
@@ -214,6 +214,7 @@ rust_library(
     deps = [
         "@rust_caliptra_crates//:caliptra-error",
         "@rust_caliptra_crates//:caliptra-registers",
+        "@rust_caliptra_crates//:ufmt",
     ],
 )
 
@@ -236,13 +237,14 @@ rust_library(
         "//third_party/caliptra:crate_zeroize",
         "@rust_caliptra_crates//:arrayvec",
         "@rust_caliptra_crates//:caliptra-api",
+        "@rust_caliptra_crates//:caliptra-auth-man-types",
         "@rust_caliptra_crates//:caliptra-error",
         "@rust_caliptra_crates//:caliptra-image-types",
         "@rust_caliptra_crates//:caliptra-lms-types",
         "@rust_caliptra_crates//:caliptra-okref",
         "@rust_caliptra_crates//:caliptra-registers",
+        "@rust_caliptra_crates//:caliptra-ureg",
         "@rust_caliptra_crates//:ufmt",
-        "@rust_caliptra_crates//:ureg",
     ],
 )
 
@@ -284,9 +286,10 @@ rust_library(
         "@rust_caliptra_crates//:caliptra-lms-types",
         "@rust_caliptra_crates//:caliptra-okref",
         "@rust_caliptra_crates//:caliptra-registers",
+        "@rust_caliptra_crates//:caliptra-ureg",
         "@rust_caliptra_crates//:caliptra_dpe",
+        "@rust_caliptra_crates//:caliptra_dpe_crypto",
         "@rust_caliptra_crates//:ufmt",
-        "@rust_caliptra_crates//:ureg",
     ],
 )
 
@@ -655,6 +658,27 @@ caliptra_firmware_binary(
     ],
 )
 
+# OCP EAT (Entity Attestation Token) CBOR/COSE encoding used by the runtime's
+# attested-CSR flow. Hand-written rule (rather than crate_features on a
+# crates_io label) because upstream's default features ("std", "crypto") pull
+# in a p384/ecdsa/rand signing path that the symbols runtime actually imports
+# (CsrEatClaims, CborEncoder, CoseSign1, ...) don't need -- those live outside
+# any `#[cfg(feature = ...)]` gate in common/eat/src, so the crate builds fine
+# with no features enabled, matching this repo's convention of not passing
+# crate_features through hand-written overlay rules (see caliptra_cfi_lib
+# above).
+rust_library(
+    name = "caliptra_ocp_eat",
+    srcs = ["@caliptra_sw//:all_files"],
+    crate_name = "caliptra_ocp_eat",
+    crate_root = "@caliptra_sw//:common/eat/src/lib.rs",
+    edition = "2021",
+    target_compatible_with = ["//third_party/caliptra/platforms:target_caliptra"],
+    deps = [
+        "@rust_caliptra_crates//:arrayvec",
+    ],
+)
+
 # Caliptra Runtime library: compiled straight from upstream lib.rs + submodules,
 # no source transformation.  Fat LTO across the library/binary boundary still
 # works because CALIPTRA_FIRMWARE_RUSTC_FLAGS sets embed-bitcode=yes on all
@@ -698,6 +722,7 @@ rust_library(
         ":caliptra_drivers_runtime",
         ":caliptra_image_verify_runtime",
         ":caliptra_kat_runtime",
+        ":caliptra_ocp_eat",
         "//third_party/caliptra:crate_bitfield",
         "//third_party/caliptra:crate_bitflags",
         "//third_party/caliptra:crate_memoffset",
@@ -707,17 +732,18 @@ rust_library(
         "@rust_caliptra_crates//:caliptra-api",
         "@rust_caliptra_crates//:caliptra-auth-man-types",
         "@rust_caliptra_crates//:caliptra-cfi-lib-git",
+        "@rust_caliptra_crates//:caliptra-dpe-response-buffer",
         "@rust_caliptra_crates//:caliptra-error",
         "@rust_caliptra_crates//:caliptra-image-types",
         "@rust_caliptra_crates//:caliptra-lms-types",
         "@rust_caliptra_crates//:caliptra-registers",
+        "@rust_caliptra_crates//:caliptra-ureg",
         "@rust_caliptra_crates//:caliptra-x509",
         "@rust_caliptra_crates//:caliptra_dpe",
         "@rust_caliptra_crates//:caliptra_dpe_crypto",
         "@rust_caliptra_crates//:caliptra_dpe_platform",
         "@rust_caliptra_crates//:constant_time_eq",
         "@rust_caliptra_crates//:ufmt",
-        "@rust_caliptra_crates//:ureg",
     ],
 )
 

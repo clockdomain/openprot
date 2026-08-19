@@ -23,6 +23,12 @@ exports_files(
         "builder/src/lib.rs",
         "platforms/emulator/rom/src/main.rs",
         "romtime/src/lib.rs",
+        "common/otp-digest/src/lib.rs",
+        "common/otp-lifecycle/src/lib.rs",
+        "common/emulator-state/src/lib.rs",
+        "common/mcu-mbox/src/lib.rs",
+        "common/otp-fuse/src/lib.rs",
+        "runtime/userspace/api/caliptra-api/src/lib.rs",
     ],
     visibility = ["//visibility:public"],
 )

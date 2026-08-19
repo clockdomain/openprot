@@ -91,6 +91,7 @@ rust_binary(
     srcs = ["caliptra_emulator_main.rs"],
     aliases = {
         "//third_party/caliptra/caliptra-mcu-sw:emulator_lib": "emulator",
+        "//third_party/caliptra/caliptra-mcu-sw:mcu_testing_common": "mcu_testing_common",
     },
     edition = "2021",
     visibility = [":__subpackages__"],

@@ -36,10 +36,11 @@ config_setting(
     for crate_name in [
         "bitfield",
         "bitflags",
+        "caliptra-image-types",
         "cfg-if",
         "log",
         "memoffset",
-        "registers-generated",
+        "caliptra-mcu-registers-generated",
         "serde",
         "serde_derive",
         "smlang",

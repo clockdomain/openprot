@@ -29,6 +29,7 @@ exports_files(
         "runtime/src/lib.rs",
         "runtime/src/main.rs",
         "auth-manifest/gen/src/lib.rs",
+        "common/eat/src/lib.rs",
     ],
     visibility = ["//visibility:public"],
 )
