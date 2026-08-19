@@ -554,11 +554,42 @@ rust_binary(
 )
 
 caliptra_objcopy(
-    name = "mcu_rom_bin",
+    name = "mcu_rom_bin_raw",
     src = ":mcu_rom",
-    out = "mcu_rom.bin",
+    out = "mcu_rom_raw.bin",
     tags = [
         "manual",
         "no-sandbox",
     ],
+)
+
+# Host tool that reimplements upstream caliptra-mcu-sw's
+# builder::rom::append_rom_digest(): pads the raw MCU ROM binary to its full
+# rom_size and appends a SHA-384 digest of the preceding bytes, so the ROM's
+# own cold_boot::rom_digest_integrity() self-check passes at boot. See
+# src/mcu_rom_digest.rs for the full upstream cross-reference.
+rust_binary(
+    name = "mcu_rom_digest",
+    srcs = ["src/mcu_rom_digest.rs"],
+    aliases = {
+        "@rust_caliptra_crates_host//:caliptra-mcu-config-emulator": "mcu_config_emulator",
+    },
+    edition = "2021",
+    deps = [
+        "@rust_caliptra_crates_host//:anyhow",
+        "@rust_caliptra_crates_host//:caliptra-mcu-config-emulator",
+        "@rust_caliptra_crates_host//:sha2",
+    ],
+)
+
+genrule(
+    name = "mcu_rom_bin",
+    srcs = [":mcu_rom_bin_raw"],
+    outs = ["mcu_rom.bin"],
+    cmd = "$(location :mcu_rom_digest) $(location :mcu_rom_bin_raw) $@",
+    tags = [
+        "manual",
+        "no-sandbox",
+    ],
+    tools = [":mcu_rom_digest"],
 )
