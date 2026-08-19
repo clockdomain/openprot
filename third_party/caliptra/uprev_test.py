@@ -22,6 +22,7 @@ if str(_REPO_ROOT) not in sys.path:
 
 from third_party.caliptra.uprev import (  # noqa: E402
     extract_commit_from_module_bazel,
+    extract_rev_for_package_from_cargo_lock,
     extract_rev_from_cargo_lock,
     extract_rev_from_cargo_toml,
     extract_sha_from_versions_bzl,
@@ -252,6 +253,39 @@ class TestReplaceCommitInModuleBazel(unittest.TestCase):
             replace_commit_in_module_bazel(
                 self.module, "caliptra_mcu_sw", "caliptra_repos", "9" * 40, "1" * 40
             )
+
+
+class TestExtractRevForPackageFromCargoLock(unittest.TestCase):
+    # Mirrors the real hazard: non-git cfi crates from the same repo URL
+    # sort before the -git crates in Cargo.lock.
+    LOCK = (
+        '[[package]]\n'
+        'name = "caliptra-cfi-derive"\n'
+        'version = "1.0.0"\n'
+        'source = "git+https://github.com/chipsalliance/caliptra-cfi?rev='
+        + "7" * 40 + '#' + "7" * 40 + '"\n'
+        '\n'
+        '[[package]]\n'
+        'name = "caliptra-cfi-lib-git"\n'
+        'version = "1.0.0"\n'
+        'source = "git+https://github.com/chipsalliance/caliptra-cfi.git?rev='
+        + "a" * 40 + '#' + "a" * 40 + '"\n'
+    )
+
+    def test_scoped_to_named_package_block(self):
+        sha = extract_rev_for_package_from_cargo_lock(self.LOCK, "caliptra-cfi-lib-git")
+        self.assertEqual(sha, "a" * 40)
+
+    def test_first_match_would_have_been_wrong(self):
+        # Documents why the URL-first-match helper is not used for cfi.
+        self.assertEqual(
+            extract_rev_from_cargo_lock(self.LOCK, "caliptra-cfi"), "7" * 40
+        )
+
+    def test_missing_package_returns_none(self):
+        self.assertIsNone(
+            extract_rev_for_package_from_cargo_lock(self.LOCK, "no-such-package")
+        )
 
 
 if __name__ == "__main__":

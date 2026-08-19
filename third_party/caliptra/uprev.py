@@ -122,6 +122,26 @@ def extract_rev_from_cargo_lock(lock_contents: str, repo: str) -> str | None:
     return m.group(1) if m else None
 
 
+def extract_rev_for_package_from_cargo_lock(
+    lock_contents: str, package: str
+) -> str | None:
+    """Extract the git rev from the [[package]] block with the given name.
+
+    Unlike extract_rev_from_cargo_lock (first match by repo URL anywhere in
+    the file), this is scoped to one package's block, which matters when
+    several packages come from the same repo URL at different revs (e.g.
+    caliptra-cfi-lib vs caliptra-cfi-lib-git).
+    """
+    pattern = re.compile(
+        rf'^name = "{re.escape(package)}"\n'
+        rf'(?:(?!\[\[package\]\]).)*?'
+        rf'source = "git\+[^"]*\?rev=([0-9a-f]{{40}})',
+        re.MULTILINE | re.DOTALL,
+    )
+    m = pattern.search(lock_contents)
+    return m.group(1) if m else None
+
+
 def extract_rev_from_cargo_toml(toml_contents: str, dep: str) -> str | None:
     """Extract the rev field for a git dep from a Cargo.toml string.
 
@@ -409,7 +429,9 @@ def cmd_verify(args: argparse.Namespace, versions: dict) -> int:
     lock_contents = fetch_cargo_lock(mcu_sha)
 
     expected_sw = extract_rev_from_cargo_lock(lock_contents, "caliptra-sw")
-    expected_cfi = extract_rev_from_cargo_lock(lock_contents, "caliptra-cfi")
+    expected_cfi = extract_rev_for_package_from_cargo_lock(
+        lock_contents, "caliptra-cfi-lib-git"
+    )
 
     actual_sw = versions["caliptra_sw"]
     actual_cfi = extract_rev_from_cargo_toml(embedded_contents, "caliptra-cfi-lib-git")
@@ -556,7 +578,9 @@ def _do_bump_transaction(
     lock_contents = fetch_cargo_lock(new_mcu_sha)
 
     new_sw = extract_rev_from_cargo_lock(lock_contents, "caliptra-sw")
-    new_cfi = extract_rev_from_cargo_lock(lock_contents, "caliptra-cfi")
+    new_cfi = extract_rev_for_package_from_cargo_lock(
+        lock_contents, "caliptra-cfi-lib-git"
+    )
 
     if not new_sw:
         _die("Could not find caliptra-sw rev in Cargo.lock")
