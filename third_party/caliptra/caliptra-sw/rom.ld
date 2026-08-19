@@ -19,7 +19,7 @@ ROM_ORG          = 0x00000000;
 ICCM_ORG         = 0x40000000;
 DCCM_ORG         = 0x50000000;
 DATA_ORG         = 0x50000000;
-STACK_ORG        = 0x50030000;
+STACK_ORG        = 0x50021800;
 ESTACK_ORG       = 0x5003F800;
 NSTACK_ORG       = 0x5003FC00;
 
@@ -35,7 +35,7 @@ ROM_SIZE          = 256K; /* Increased from 96K for testing */
 ICCM_SIZE         = 256K;
 DCCM_SIZE         = 256K;
 DATA_SIZE         = 996;
-STACK_SIZE        = 62K;
+STACK_SIZE        = 120K;
 ESTACK_SIZE       = 1K;
 NSTACK_SIZE       = 1K;
 
