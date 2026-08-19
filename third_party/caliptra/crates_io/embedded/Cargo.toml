@@ -31,7 +31,14 @@ caliptra-cfi-lib-git = { git = "https://github.com/chipsalliance/caliptra-cfi", 
 caliptra-cfi-derive-git = { git = "https://github.com/chipsalliance/caliptra-cfi", rev = "a98e499d279e81ae85881991b1e9eee354151189" }
 caliptra-dpe-platform = { git = "https://github.com/chipsalliance/caliptra-dpe", rev = "cf3224c41b64789aa556e4f0c78e7395c6528a43", default-features = false }
 caliptra-dpe-crypto = { git = "https://github.com/chipsalliance/caliptra-dpe", rev = "cf3224c41b64789aa556e4f0c78e7395c6528a43", default-features = false }
-caliptra-dpe = { git = "https://github.com/chipsalliance/caliptra-dpe", rev = "cf3224c41b64789aa556e4f0c78e7395c6528a43", default-features = false, features = ["p384"] }
+# features must match caliptra-sw@85981e1bc28662a9a9fa5040cbb38ac46e548217's
+# own workspace Cargo.toml pin for caliptra-dpe exactly ("hybrid" transitively
+# enables "p384" too, per caliptra-dpe's own [features] table). caliptra-sw's
+# comment there: "caliptra-2.0 keeps arbitrary_max_handles with
+# ARBITRARY_MAX_HANDLES=32 to preserve the ROM-visible DPE state layout" —
+# see the matching build_script_env on the caliptra-dpe crate.annotation in
+# //third_party/caliptra:MODULE.bazel.
+caliptra-dpe = { git = "https://github.com/chipsalliance/caliptra-dpe", rev = "cf3224c41b64789aa556e4f0c78e7395c6528a43", default-features = false, features = ["hybrid", "arbitrary_max_handles"] }
 
 # MCU embedded crates
 caliptra-mcu-error = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "a8b5eb8cf8ef98279988237e58f3ed9ade0072f5", default-features = false }

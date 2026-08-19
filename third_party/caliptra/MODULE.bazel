@@ -32,6 +32,20 @@ crate.annotation(
     deps = ["@rust_caliptra_crates__serde-1.0.228//:serde"],
 )
 
+# caliptra-dpe's build.rs sizes its MAX_HANDLES-dependent structs (and hence
+# caliptra-sw's fixed-size DPE_SIZE DCCM budget in drivers/src/persistent.rs)
+# from the ARBITRARY_MAX_HANDLES env var when the arbitrary_max_handles
+# feature is active (see caliptra-dpe's build.rs). Bazel doesn't read Cargo's
+# .cargo/config.toml, so caliptra-sw's own workspace-level pin of this env var
+# ([env] ARBITRARY_MAX_HANDLES = "32", with the comment "caliptra-2.0 keeps
+# arbitrary_max_handles with ARBITRARY_MAX_HANDLES=32 to preserve the
+# ROM-visible DPE state layout") has to be threaded through explicitly here.
+crate.annotation(
+    crate = "caliptra-dpe",
+    repositories = ["rust_caliptra_crates"],
+    build_script_env = {"ARBITRARY_MAX_HANDLES": "32"},
+)
+
 # Caliptra host-only crate workspace — resolves for host triples only so
 # features like ecdsa/pem that pull in alloc do NOT leak into riscv32 builds.
 crate.from_cargo(
