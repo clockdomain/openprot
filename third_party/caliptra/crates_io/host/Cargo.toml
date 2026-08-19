@@ -88,42 +88,42 @@ zerocopy = { version = "0.8.48", features = ["derive"] }
 zeroize = { version = "1.8", features = ["derive"] }
 
 # --- Caliptra host tool crates ---
-caliptra-builder = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
-caliptra-image-crypto = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false, features = ["rustcrypto"] }
-caliptra-image-app = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false, features = ["rustcrypto"] }
-caliptra-image-gen = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
-caliptra-image-elf = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
-caliptra-image-serde = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
+caliptra-builder = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
+caliptra-image-crypto = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false, features = ["rustcrypto"] }
+caliptra-image-app = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false, features = ["rustcrypto"] }
+caliptra-image-gen = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
+caliptra-image-elf = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
+caliptra-image-serde = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
 
 # --- Caliptra crates needed for resolution of the above ---
-caliptra-api-types = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
-caliptra-drivers = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
-caliptra-error = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
-caliptra-image-types = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false, features = ["std"] }
-caliptra-okref = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
-caliptra-lms-types = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false, features = ["std"] }
-caliptra-auth-man-types = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
-caliptra-registers = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
+caliptra-api-types = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
+caliptra-drivers = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
+caliptra-error = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
+caliptra-image-types = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false, features = ["std"] }
+caliptra-okref = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
+caliptra-lms-types = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false, features = ["std"] }
+caliptra-auth-man-types = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
+caliptra-registers = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
 
 # --- Emulator crates (host-only) ---
-caliptra-emu-bus = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
-caliptra-emu-cpu = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
-caliptra-emu-crypto = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
-caliptra-emu-periph = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
-caliptra-emu-types = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "2fe38a094bd06188714ff7c040252bc3059d9699", default-features = false }
+caliptra-emu-bus = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
+caliptra-emu-cpu = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
+caliptra-emu-crypto = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
+caliptra-emu-periph = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
+caliptra-emu-types = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217", default-features = false }
 
 # --- MCU host-side crates (Phase 7) ---
-registers-generated = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "b7e45fc139620754e8d32e70d6cc90845d1756df", default-features = false }
-mcu-config = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "b7e45fc139620754e8d32e70d6cc90845d1756df", default-features = false }
-mcu-config-emulator = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "b7e45fc139620754e8d32e70d6cc90845d1756df", default-features = false }
-mcu-config-fpga = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "b7e45fc139620754e8d32e70d6cc90845d1756df", default-features = false }
-flash-image = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "b7e45fc139620754e8d32e70d6cc90845d1756df", default-features = false }
-mctp-vdm-common = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "b7e45fc139620754e8d32e70d6cc90845d1756df", default-features = false }
-pldm-common = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "b7e45fc139620754e8d32e70d6cc90845d1756df", default-features = false }
-pldm-fw-pkg = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "b7e45fc139620754e8d32e70d6cc90845d1756df", default-features = false }
-pldm-ua = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "b7e45fc139620754e8d32e70d6cc90845d1756df", default-features = false }
-mcu-firmware-bundler = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "b7e45fc139620754e8d32e70d6cc90845d1756df", default-features = false }
-caliptra-util-host-mailbox-test-config = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "b7e45fc139620754e8d32e70d6cc90845d1756df", default-features = false }
+registers-generated = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "a8b5eb8cf8ef98279988237e58f3ed9ade0072f5", default-features = false }
+mcu-config = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "a8b5eb8cf8ef98279988237e58f3ed9ade0072f5", default-features = false }
+mcu-config-emulator = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "a8b5eb8cf8ef98279988237e58f3ed9ade0072f5", default-features = false }
+mcu-config-fpga = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "a8b5eb8cf8ef98279988237e58f3ed9ade0072f5", default-features = false }
+flash-image = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "a8b5eb8cf8ef98279988237e58f3ed9ade0072f5", default-features = false }
+mctp-vdm-common = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "a8b5eb8cf8ef98279988237e58f3ed9ade0072f5", default-features = false }
+pldm-common = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "a8b5eb8cf8ef98279988237e58f3ed9ade0072f5", default-features = false }
+pldm-fw-pkg = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "a8b5eb8cf8ef98279988237e58f3ed9ade0072f5", default-features = false }
+pldm-ua = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "a8b5eb8cf8ef98279988237e58f3ed9ade0072f5", default-features = false }
+mcu-firmware-bundler = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "a8b5eb8cf8ef98279988237e58f3ed9ade0072f5", default-features = false }
+caliptra-util-host-mailbox-test-config = { git = "https://github.com/chipsalliance/caliptra-mcu-sw", rev = "a8b5eb8cf8ef98279988237e58f3ed9ade0072f5", default-features = false }
 
 # No [patch] section needed for caliptra-sw — deps already point to the upstream
 # GitHub rev.  The Bazel git_repository rules handle local source.
