@@ -264,11 +264,11 @@ rust_library(
     ],
     rustc_flags = ["--cap-lints=allow"],
     # Pinned to the caliptra target platform because its transitive dep on
-    # @rust_caliptra_crates//:caliptra_dpe (and that repo's zerocopy / zeroize)
+    # @rust_caliptra_crates//:caliptra-dpe (and that repo's zerocopy / zeroize)
     # only aligns cleanly with the rest of caliptra-sw under riscv32imc.  On
     # host triples the //third_party/caliptra:crate_zerocopy select routes to
     # @rust_caliptra_crates_host, which does not match the embedded-repo
-    # zerocopy pulled in through caliptra_dpe (duplicate-crate trait errors).
+    # zerocopy pulled in through caliptra-dpe (duplicate-crate trait errors).
     target_compatible_with = ["//third_party/caliptra/platforms:target_caliptra"],
     deps = [
         ":caliptra_cfi_lib",
@@ -287,8 +287,8 @@ rust_library(
         "@rust_caliptra_crates//:caliptra-okref",
         "@rust_caliptra_crates//:caliptra-registers",
         "@rust_caliptra_crates//:caliptra-ureg",
-        "@rust_caliptra_crates//:caliptra_dpe",
-        "@rust_caliptra_crates//:caliptra_dpe_crypto",
+        "@rust_caliptra_crates//:caliptra-dpe",
+        "@rust_caliptra_crates//:caliptra-dpe-crypto",
         "@rust_caliptra_crates//:ufmt",
     ],
 )
@@ -732,16 +732,23 @@ rust_library(
         "@rust_caliptra_crates//:caliptra-api",
         "@rust_caliptra_crates//:caliptra-auth-man-types",
         "@rust_caliptra_crates//:caliptra-cfi-lib-git",
-        "@rust_caliptra_crates//:caliptra-dpe-response-buffer",
+        # caliptra-dpe-response-buffer is a pure workspace-member dependency of
+        # caliptra-dpe (not declared directly in our crates_io Cargo.toml), so
+        # cargo-bazel does not generate a hub alias (versioned or unversioned)
+        # for it — same reason MODULE.bazel's caliptra-lms-types annotation
+        # reaches serde/serde_derive via the fully-qualified repo-target label
+        # instead of a hub alias. caliptra-dpe's own generated BUILD.bazel
+        # resolves it the identical way internally.
+        "@rust_caliptra_crates__caliptra-dpe-response-buffer-0.1.0//:caliptra_dpe_response_buffer",
         "@rust_caliptra_crates//:caliptra-error",
         "@rust_caliptra_crates//:caliptra-image-types",
         "@rust_caliptra_crates//:caliptra-lms-types",
         "@rust_caliptra_crates//:caliptra-registers",
         "@rust_caliptra_crates//:caliptra-ureg",
         "@rust_caliptra_crates//:caliptra-x509",
-        "@rust_caliptra_crates//:caliptra_dpe",
-        "@rust_caliptra_crates//:caliptra_dpe_crypto",
-        "@rust_caliptra_crates//:caliptra_dpe_platform",
+        "@rust_caliptra_crates//:caliptra-dpe",
+        "@rust_caliptra_crates//:caliptra-dpe-crypto",
+        "@rust_caliptra_crates//:caliptra-dpe-platform",
         "@rust_caliptra_crates//:constant_time_eq",
         "@rust_caliptra_crates//:ufmt",
     ],

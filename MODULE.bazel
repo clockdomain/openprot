@@ -70,7 +70,17 @@ crate.from_cargo(
         "thumbv7em-none-eabi",
     ],
 )
-use_repo(crate, "rust_caliptra_crates", "rust_caliptra_crates_host", "rust_crates")
+# caliptra-dpe-response-buffer is a path-dependency workspace member inside
+# the caliptra-dpe repo (declared as `caliptra-dpe-response-buffer.workspace
+# = true` inside caliptra-dpe's own Cargo.toml, not in our crates_io
+# Cargo.toml), so cargo-bazel's rust_caliptra_crates hub never emits a
+# convenience alias for it — versioned or unversioned; caliptra-dpe's own
+# generated BUILD.bazel reaches it via the fully-qualified repo-target label
+# instead. caliptra-runtime's manifest depends on it directly
+# (runtime/Cargo.toml; used by invoke_dpe.rs, dpe_platform.rs, dpe_crypto.rs,
+# drivers.rs), so caliptra-sw/BUILD.bazel's caliptra_runtime_lib rule needs
+# that same fully-qualified label lifted into this module's namespace too.
+use_repo(crate, "rust_caliptra_crates", "rust_caliptra_crates__caliptra-dpe-response-buffer-0.1.0", "rust_caliptra_crates_host", "rust_crates")
 
 pw_rust_crates_ext = use_extension("@pigweed//pw_build:pw_rust_crates_extension.bzl", "pw_rust_crates_extension")
 

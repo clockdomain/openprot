@@ -16,14 +16,14 @@
 use caliptra_emu_cpu::StepAction;
 use clap::Parser;
 use emulator::{Emulator, EmulatorArgs};
-use mcu_testing_common::MCU_RUNNING;
+use mcu_testing_common::is_emulator_running;
 use std::io;
 
 fn main() -> io::Result<()> {
     let cli = EmulatorArgs::parse();
     let mut emulator = Emulator::from_args(cli, false)?;
     emulator.start_i3c_controller();
-    while MCU_RUNNING.load(std::sync::atomic::Ordering::Relaxed) {
+    while is_emulator_running() {
         match emulator.step() {
             StepAction::Break | StepAction::Fatal => break,
             _ => {}
