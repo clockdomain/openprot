@@ -515,6 +515,21 @@ rust_binary(
         "link-arg=-Wl,-nmagic",
         "-C",
         "link-arg=-Wl,--icf=all",
+        # Match caliptra-mcu-sw's own [profile.release]/[profile.devel]
+        # (Cargo.toml at the repo root; both share these 3 size-optimization
+        # settings) -- Bazel doesn't read Cargo profiles, so without these
+        # explicit flags this rule builds at whatever opt-level/codegen-units
+        # Bazel's own compilation mode implies (no LTO, many codegen units),
+        # which does not fit the fixed 64 KiB ROM region upstream's own
+        # build targets. embed-bitcode=yes is already set globally for every
+        # rustc invocation via .bazelrc's --@rules_rust//:extra_rustc_flags,
+        # which fat LTO here requires.
+        "-C",
+        "opt-level=z",
+        "-C",
+        "codegen-units=1",
+        "-C",
+        "lto=fat",
     ],
     tags = ["manual"],
     deps = [

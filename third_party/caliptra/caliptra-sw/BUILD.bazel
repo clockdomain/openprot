@@ -770,11 +770,11 @@ caliptra_firmware_binary(
     ],
     map_file = "caliptra_runtime.map",
     deps = [
+        ":caliptra_cfi_lib",
         ":caliptra_common_runtime",
         ":caliptra_cpu",
         ":caliptra_drivers_runtime",
         ":caliptra_runtime_lib",
-        "@rust_caliptra_crates//:caliptra-cfi-lib-git",
         "@rust_caliptra_crates//:caliptra-error",
         "@rust_caliptra_crates//:caliptra-registers",
         "@rust_caliptra_crates//:ufmt",
