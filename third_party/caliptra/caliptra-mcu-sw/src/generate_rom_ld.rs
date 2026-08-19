@@ -40,6 +40,24 @@ SECTIONS
         *(.rodata*)
     } > ROM
 
+    /* start.s does `la t0, MRAC_VALUE; lw t1, 0(t0)` -- it dereferences
+     * MRAC_VALUE as a real address holding the CSR configuration word,
+     * not the value itself. A plain top-level assignment
+     * (`MRAC_VALUE = <value>;`) makes MRAC_VALUE an *absolute* symbol
+     * equal to <value>, which unconditionally overrides any real storage
+     * the Rust static of the same name would otherwise get (linker
+     * script symbol assignments take precedence over object-file
+     * definitions) -- so `la` loads the raw value, not an address, and
+     * the subsequent `lw` faults reading whatever that value happens to
+     * point at. Give MRAC_VALUE real storage instead: a populated ROM
+     * word, with the symbol naming its address.
+     */
+    .mrac_value : ALIGN(4)
+    {
+        MRAC_VALUE = .;
+        LONG($MRAC_VALUE);
+    } > ROM
+
     ROM_DATA = .;
 
     .data : AT(ROM_DATA)
@@ -90,7 +108,6 @@ STACK_SIZE = $ROM_STACK_SIZE;
 STACK_TOP = ORIGIN(RAM) + LENGTH(RAM);
 STACK_ORIGIN = STACK_TOP - STACK_SIZE;
 ESTACK_SIZE = $ROM_ESTACK_SIZE;
-MRAC_VALUE = $MRAC_VALUE;
 
 "#;
 
