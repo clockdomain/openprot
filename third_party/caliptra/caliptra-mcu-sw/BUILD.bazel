@@ -520,7 +520,7 @@ rust_binary(
         # settings) -- Bazel doesn't read Cargo profiles, so without these
         # explicit flags this rule builds at whatever opt-level/codegen-units
         # Bazel's own compilation mode implies (no LTO, many codegen units),
-        # which does not fit the fixed 64 KiB ROM region upstream's own
+        # which does not fit the fixed 64 KiB ROM region that upstream's own
         # build targets. embed-bitcode=yes is already set globally for every
         # rustc invocation via .bazelrc's --@rules_rust//:extra_rustc_flags,
         # which fat LTO here requires.

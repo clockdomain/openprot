@@ -102,7 +102,12 @@ ufmt-macros = { git = "https://github.com/korran/ufmt.git", rev = "1d0743c1ffffc
 # strip_prefix), which then fails to fetch. Redirect dpe's transitive pin onto
 # caliptra-sw's in-tree cfi/derive, cfi/lib so it resolves to the *same*
 # PackageId as our own direct caliptra-cfi-derive/-lib entries above, leaving
-# only two sources overall (down from three) and no collision.
+# only two sources overall (down from three) and no collision. This mirrors
+# upstream caliptra-sw's own resolution: its root Cargo.toml (at rev
+# 85981e1b, lines ~239-241) carries the equivalent
+# `[patch."https://github.com/chipsalliance/caliptra-cfi.git"]` redirecting
+# the same two crates to its in-tree cfi/ copies -- the net effect here is
+# that dpe compiles against caliptra-sw's cfi copy.
 [patch."https://github.com/chipsalliance/caliptra-cfi"]
 caliptra-cfi-derive = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217" }
 caliptra-cfi-lib = { git = "https://github.com/chipsalliance/caliptra-sw", rev = "85981e1bc28662a9a9fa5040cbb38ac46e548217" }

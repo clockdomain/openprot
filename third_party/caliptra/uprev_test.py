@@ -259,17 +259,23 @@ class TestExtractRevForPackageFromCargoLock(unittest.TestCase):
     # Mirrors the real hazard: non-git cfi crates from the same repo URL
     # sort before the -git crates in Cargo.lock.
     LOCK = (
-        '[[package]]\n'
+        "[[package]]\n"
         'name = "caliptra-cfi-derive"\n'
         'version = "1.0.0"\n'
         'source = "git+https://github.com/chipsalliance/caliptra-cfi?rev='
-        + "7" * 40 + '#' + "7" * 40 + '"\n'
-        '\n'
-        '[[package]]\n'
+        + "7" * 40
+        + "#"
+        + "7" * 40
+        + '"\n'
+        "\n"
+        "[[package]]\n"
         'name = "caliptra-cfi-lib-git"\n'
         'version = "1.0.0"\n'
         'source = "git+https://github.com/chipsalliance/caliptra-cfi.git?rev='
-        + "a" * 40 + '#' + "a" * 40 + '"\n'
+        + "a" * 40
+        + "#"
+        + "a" * 40
+        + '"\n'
     )
 
     def test_scoped_to_named_package_block(self):

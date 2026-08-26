@@ -564,7 +564,7 @@
   "moduleExtensions": {
     "//third_party/caliptra:extensions.bzl%caliptra_repos": {
       "general": {
-        "bzlTransitiveDigest": "0oYmHsokrKl4TOVSFqhbnP8D/MkccEV+xzvZ9PcrtWk=",
+        "bzlTransitiveDigest": "LHu9b0Hgt/kIdhkm0U2HlIbsugQtdLCo01btrw9xPxQ=",
         "usagesDigest": "ODX7jX2XQ5ywJ6htOZNVOezD0lY5SqvrMRMaa38fSMQ=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
@@ -2260,7 +2260,7 @@
           "@@//third_party/crates_io/Cargo.lock": "89b1c9239e43dae22407a70b21cac165ea5832e2f0fa402c44ca5a1b745df669",
           "@@//third_party/crates_io/Cargo.toml": "040660232445ac3ef9c0b5735465ea0b7af830f7263068e869c68b34e2dbb110",
           "@@caliptra_deps+//crates_io/embedded/Cargo.lock": "6e52a669bc642240f58ad33eb9fffcaeedd261231953822930a54fa51e95c4f9",
-          "@@caliptra_deps+//crates_io/embedded/Cargo.toml": "fcca75bf5ffb2238420badbc11e5430493d418d5e653ce0e511f7a7cae9f0ea5",
+          "@@caliptra_deps+//crates_io/embedded/Cargo.toml": "2924efc1c0a21e31445c09d147b346d9f4ed0ad7eb9a8dbe04911cd918635c4b",
           "@@caliptra_deps+//crates_io/host/Cargo.lock": "22e73d90bd6bcbb4b0742deb60b28394a25beca374f0b159c5932625cb0e8ddb",
           "@@caliptra_deps+//crates_io/host/Cargo.toml": "3dde1226df23f26e6e531d6e48f040ecae56cdd02785875233a0a3471dc24530",
           "@@pigweed+//third_party/crates_io/crates_no_std/Cargo.lock": "6e163646568d198fe47f57eaddab9cbf8acd8125c6ee492af7410f09fe659b3b",

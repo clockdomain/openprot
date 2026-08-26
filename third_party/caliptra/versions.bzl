@@ -36,7 +36,7 @@ plans/uprevpy.md under "bump / release / latest — dual-write path".
 
 CALIPTRA_VERSIONS = {
     "caliptra_cfi": "a98e499d279e81ae85881991b1e9eee354151189",
-    "caliptra_dpe": "f56f66ef4ada62bd99b5670c8384dc2e97e04e94",
+    "caliptra_dpe": "cf3224c41b64789aa556e4f0c78e7395c6528a43",
     "caliptra_mcu_sw": "a8b5eb8cf8ef98279988237e58f3ed9ade0072f5",
     "caliptra_sw": "85981e1bc28662a9a9fa5040cbb38ac46e548217",
     "release_tag": "",

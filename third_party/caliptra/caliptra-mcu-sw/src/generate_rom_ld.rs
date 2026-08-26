@@ -8,7 +8,12 @@
 //
 // Mirrors `pub fn rom_ld_script(memory_map: &McuMemoryMap) -> String` in
 // `caliptra-mcu-sw/builder/src/rom.rs` (around line 130). The template
-// string is a direct copy of the `ROM_LD_TEMPLATE` const from that file.
+// string deliberately diverges from upstream's `ROM_LD_TEMPLATE` const: our
+// `.mrac_value` section replaces upstream's plain `MRAC_VALUE = <value>;`
+// assignment, which is broken -- it makes the symbol absolute rather than
+// giving it real storage, so the ROM's `la`/`lw` sequence faults (see the
+// block comment lower in this file). Do NOT revert this to a direct copy
+// of upstream's template on future uprevs.
 // That function lives in the `mcu-builder` crate, which we cannot depend on
 // from Bazel because its sole dependency is `caliptra_builder`, which has
 // unresolved upstream deps (`fslock`, `Crypto` trait wiring, `CARGO` env

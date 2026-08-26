@@ -134,7 +134,7 @@ def extract_rev_for_package_from_cargo_lock(
     """
     pattern = re.compile(
         rf'^name = "{re.escape(package)}"\n'
-        rf'(?:(?!\[\[package\]\]).)*?'
+        rf"(?:(?!\[\[package\]\]).)*?"
         rf'source = "git\+[^"]*\?rev=([0-9a-f]{{40}})',
         re.MULTILINE | re.DOTALL,
     )
