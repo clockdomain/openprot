@@ -40,5 +40,5 @@ CALIPTRA_VERSIONS = {
     "caliptra_mcu_sw": "a8b5eb8cf8ef98279988237e58f3ed9ade0072f5",
     "caliptra_sw": "85981e1bc28662a9a9fa5040cbb38ac46e548217",
     "release_tag": "",
-    "ureg": "412ca40146d5d2012417e493b4a01096b04edf4b",
+    "ureg": "4762ed5eef323a4267720a6b6da287c88738f901",
 }
