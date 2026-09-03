@@ -29,6 +29,13 @@ git_override(
         # veer_pic early_init; without it the first external interrupt
         # vectors through an unprogrammed table to address 0.
         "//third_party/pigweed:veer_pic_meivt.patch",
+        # Defer RISC-V context switches requested from interrupt context to
+        # trap_handler's tail, and drop the scheduler lock across a
+        # voluntary switch. Without it, waking a higher-priority thread from
+        # an interrupt abandons the trap frame and leaks the scheduler lock.
+        # Touches arch/riscv/{exceptions,threads}.rs only, so it is
+        # independent of veer_pic_meivt.patch above.
+        "//third_party/pigweed:riscv_interrupt_context_switch.patch",
     ],
     remote = "https://pigweed.googlesource.com/pigweed/pigweed",
 )

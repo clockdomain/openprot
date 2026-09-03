@@ -65,6 +65,17 @@ impl VeerPicConfigInterface for VeerPicConfig {
     const MEIVT_BASE_ADDRESS: usize = 0x5000_3C00;
 }
 
+// Compile-time validation of the VeeR PIC constants above. This is a
+// module-level `const _`, not an associated const in an `impl` block: rustc
+// evaluates the former unconditionally, but the latter only where it is
+// referenced, which would silently disable these checks.
+const _: () = {
+    // MEIVT stores MEIHAP[31:10], so the table base must be 1KiB-aligned.
+    assert!(<VeerPicConfig as VeerPicConfigInterface>::MEIVT_BASE_ADDRESS & 0x3ff == 0);
+    // claimid is 8 bits, so the core can address at most 256 table entries.
+    assert!(<VeerPicConfig as VeerPicConfigInterface>::MAX_IRQS <= 256);
+};
+
 pub struct TimerConfig;
 
 const TIMER_BASE: usize = 0x2100_0000;

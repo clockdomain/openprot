@@ -4,12 +4,17 @@ Date: Sat, 15 Aug 2026 14:55:39 -0700
 Subject: [PATCH] pw_kernel: Program the VeeR MEIVT redirect table
 
 Change-Id: I620a7b97d41df2c3d50632fc4870c4a98797c0f8
+
+[openprot] The original change also set MEIVT_BASE_ADDRESS on pigweed's
+build-only `pw_kernel/target/veer` target. Upstream deleted that target,
+so that hunk is dropped here; openprot supplies the only implementor of
+VeerPicConfigInterface from //target/veer:config, which sets
+MEIVT_BASE_ADDRESS itself.
 ---
  pw_kernel/arch/riscv/regs/veer.rs | 36 +++++++++++++++++++++++++++++++
  pw_kernel/arch/riscv/veer_pic.rs  | 27 ++++++++++++++++++++++-
  pw_kernel/config/lib.rs           |  7 ++++++
- pw_kernel/target/veer/config.rs   | 17 ++++++++++++---
- 4 files changed, 83 insertions(+), 4 deletions(-)
+ 3 files changed, 66 insertions(+), 1 deletion(-)
 
 diff --git a/pw_kernel/arch/riscv/regs/veer.rs b/pw_kernel/arch/riscv/regs/veer.rs
 index 42f02ede3..0405540c4 100644
@@ -118,38 +123,6 @@ index 60446ff12..55b403ce9 100644
  }
  
  /// CLINT timer config.
-diff --git a/pw_kernel/target/veer/config.rs b/pw_kernel/target/veer/config.rs
-index a341be1e9..e8542322c 100644
---- a/pw_kernel/target/veer/config.rs
-+++ b/pw_kernel/target/veer/config.rs
-@@ -48,13 +48,24 @@ impl RiscVKernelConfigInterface for KernelConfig {
-     }
- }
- 
--// VeeR EH1 PIC. This address is never dereferenced: this target is build-only
--// and exists to keep `veer_pic.rs` compiled and linted. No image built for it
--// runs, as QEMU has neither the PIC MMIO window nor VeeR's CSRs.
-+// VeeR EH1 PIC. These addresses are never dereferenced: this target is
-+// build-only and exists to keep `veer_pic.rs` compiled and linted. No image
-+// built for it runs, as QEMU has neither the PIC MMIO window nor VeeR's CSRs.
- pub struct VeerPicConfig;
- 
- impl VeerPicConfigInterface for VeerPicConfig {
-     const PIC_BASE_ADDRESS: usize = 0xf00c_0000;
-+    // 1KiB-aligned and within DCCM, as MEIVT requires.
-+    const MEIVT_BASE_ADDRESS: usize = 0xf004_0000;
-+}
-+
-+impl VeerPicConfig {
-+    const _ASSERT_VALID: () = {
-+        // MEIVT stores MEIHAP[31:10], so the table base must be 1KiB-aligned.
-+        assert!(Self::MEIVT_BASE_ADDRESS & 0x3ff == 0);
-+        // claimid is 8 bits, so the core can address at most 256 table entries.
-+        assert!(Self::MAX_IRQS <= 256);
-+    };
- }
- 
- pub struct TimerConfig;
 -- 
 2.34.1
 
