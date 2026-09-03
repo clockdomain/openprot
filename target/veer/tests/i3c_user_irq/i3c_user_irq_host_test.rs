@@ -39,8 +39,6 @@ fn i3c_user_irq_host_test() {
     let status = runner.wait();
     assert!(
         status.success(),
-        "runner exited with status: {} after {} write attempts",
-        status,
-        attempts
+        "runner exited with status: {status} after {attempts} write attempts"
     );
 }

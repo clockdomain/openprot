@@ -103,22 +103,18 @@ pub fn send_private_write_on_stream(
     frame.extend_from_slice(&body);
     stream
         .write_all(&frame)
-        .map_err(|e| format!("failed writing I3C private-write frame: {}", e))?;
+        .map_err(|e| format!("failed writing I3C private-write frame: {e}"))?;
     println!(
-        "I3C HOST TRACE: wrote frame to addr=0x{target_addr:02x} header={:02x?} body={:02x?}",
-        header, body
+        "I3C HOST TRACE: wrote frame to addr=0x{target_addr:02x} header={header:02x?} body={body:02x?}"
     );
     Ok(())
 }
 
-pub fn send_private_read_on_stream(
-    stream: &mut TcpStream,
-    target_addr: u8,
-) -> Result<(), String> {
+pub fn send_private_read_on_stream(stream: &mut TcpStream, target_addr: u8) -> Result<(), String> {
     let header = make_private_read_header(target_addr);
     stream
         .write_all(&header)
-        .map_err(|e| format!("failed writing I3C private-read command: {}", e))?;
+        .map_err(|e| format!("failed writing I3C private-read command: {e}"))?;
     println!("I3C HOST TRACE: wrote read command to addr=0x{target_addr:02x}");
     Ok(())
 }
@@ -133,13 +129,13 @@ pub fn read_outgoing_packet<R: Read>(reader: &mut R) -> Result<OutgoingPacket, S
     let mut header = [0u8; 6];
     reader
         .read_exact(&mut header)
-        .map_err(|e| format!("failed reading outgoing packet header: {}", e))?;
+        .map_err(|e| format!("failed reading outgoing packet header: {e}"))?;
     let descriptor = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
     let len = (descriptor & 0xffff) as usize;
     let mut data = vec![0u8; len];
     reader
         .read_exact(&mut data)
-        .map_err(|e| format!("failed reading outgoing packet data ({} bytes): {}", len, e))?;
+        .map_err(|e| format!("failed reading outgoing packet data ({len} bytes): {e}"))?;
     Ok(OutgoingPacket {
         ibi: header[0],
         from_addr: header[1],
@@ -157,8 +153,7 @@ pub fn extract_target_addr(line: &str) -> Option<u8> {
 }
 
 fn resolve_runner_path(runner_rel_path: &str) -> PathBuf {
-    let srcdir =
-        std::env::var("TEST_SRCDIR").expect("missing TEST_SRCDIR environment variable");
+    let srcdir = std::env::var("TEST_SRCDIR").expect("missing TEST_SRCDIR environment variable");
     let workspace =
         std::env::var("TEST_WORKSPACE").expect("missing TEST_WORKSPACE environment variable");
     let candidate = Path::new(&srcdir).join(&workspace).join(runner_rel_path);
@@ -174,9 +169,10 @@ fn resolve_runner_path(runner_rel_path: &str) -> PathBuf {
 }
 
 fn resolve_runner_cwd(runner: &Path) -> PathBuf {
-    if let (Ok(srcdir), Ok(workspace)) =
-        (std::env::var("TEST_SRCDIR"), std::env::var("TEST_WORKSPACE"))
-    {
+    if let (Ok(srcdir), Ok(workspace)) = (
+        std::env::var("TEST_SRCDIR"),
+        std::env::var("TEST_WORKSPACE"),
+    ) {
         let root = Path::new(&srcdir).join(&workspace);
         if root.exists() {
             return root;
@@ -216,8 +212,14 @@ impl Runner {
         let exited = Arc::new(AtomicBool::new(false));
         let target_addr = Arc::new(AtomicU8::new(DEFAULT_TARGET_ADDR));
 
-        let stdout = child.stdout.take().expect("failed to capture runner stdout");
-        let stderr = child.stderr.take().expect("failed to capture runner stderr");
+        let stdout = child
+            .stdout
+            .take()
+            .expect("failed to capture runner stdout");
+        let stderr = child
+            .stderr
+            .take()
+            .expect("failed to capture runner stderr");
 
         let watch = |reader: Box<dyn Read + Send>,
                      to_stderr: bool,
@@ -236,9 +238,9 @@ impl Runner {
                         break;
                     }
                     if to_stderr {
-                        eprint!("{}", line);
+                        eprint!("{line}");
                     } else {
-                        print!("{}", line);
+                        print!("{line}");
                     }
                     if let Some(addr) = extract_target_addr(&line) {
                         target_addr.store(addr, Ordering::Relaxed);
