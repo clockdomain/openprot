@@ -1,8 +1,20 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: Anthony Rocha <anthony.rocha@amd.corp-partner.google.com>
+From: Anthony Rocha <anthony.rocha@amd.com>
 Date: Tue, 1 Sep 2026 00:00:00 -0700
 Subject: [PATCH] pw_kernel: Fix RISC-V context switches from interrupt
  context
+
+Squash of two upstream CLs, vendored from
+https://github.com/clockdomain/pigweed/tree/riscv-irq-deferred-reschedule
+(2df2e9693, 978d788de; both based on upstream 88af1ce54):
+
+  pw_kernel: Defer RISC-V context switches from interrupt context
+  Change-Id: I96113ccffef3e2da5914f8041f02ecf8e2ca2fd3
+
+  pw_kernel: Release the RISC-V scheduler lock across a voluntary block
+  Change-Id: I18fa2cfc525ce3cdedf420524253ed0e45c6c1b7
+
+1. Defer context switches requested from interrupt context.
 
 `Arch::context_switch` on RISC-V always performed the cooperative
 "save callee-saved registers, swap `sp`, `ret`" fiber switch
@@ -26,84 +38,106 @@ PendSV/tail-chaining hardware, so the deferred switch is completed later
 from `trap_handler`'s tail (`exceptions.rs`), once the interrupt handler
 has fully returned and every RAII guard it took has unwound -- the
 software equivalent of PendSV's guarantee to only run once nothing else
-is pending.
+is pending. As on Cortex-M, only the outgoing thread is stashed; the
+incoming thread is read back from the scheduler at completion time.
 
-Separately, this also fixes the scheduler lock being held for the entire
-duration a thread is voluntarily blocked (e.g. in `wait()`), which the
-Cortex-M port avoids by dropping the lock before its switch and
-re-acquiring a fresh guard on resume, but the RISC-V port never did.
-Without this, the first attempt by anything else to acquire that lock
-while a thread is blocked -- e.g. an interrupt handler waking a different
-thread -- immediately trips the single-hart spinlock's recursive-lock
-assertion. The drop must happen before `THREAD_LOCAL_STATE` is switched to
-the new thread: dropping the lock guard also drops its embedded
+Interrupt context is tracked as a nesting depth (`HW_INTERRUPT_NESTING`)
+rather than a flag, mirroring Zephyr's per-CPU `struct _cpu::nested`
+counter, and the deferred switch is completed only while unwinding the
+outermost interrupt -- the same condition as Zephyr's
+`if (--_current_cpu->nested == 0)` reschedule check. It is a plain
+`static mut` rather than an atomic: the kernel is single-hart and every
+access happens with `mstatus.MIE` clear, and an `AtomicUsize` counter
+would need read-modify-write atomics, which are unavailable on targets
+built without the RISC-V A extension.
+
+2. Release the scheduler lock across a voluntary block.
+
+`Arch::context_switch` held the scheduler lock for the entire duration a
+thread stayed voluntarily blocked (e.g. in `wait()`): the guard is passed
+into `riscv_context_switch` and isn't dropped until the blocked thread is
+later resumed and its own call chain unwinds past it. The Cortex-M port
+avoids this by dropping the lock before its switch and re-acquiring a
+fresh guard on resume; the RISC-V port never did. Without this, the first
+attempt by anything else to acquire that lock while a thread is blocked --
+e.g. an interrupt handler waking a different thread via (1) above --
+immediately trips the single-hart spinlock's recursive-lock assertion.
+
+The drop must happen before `THREAD_LOCAL_STATE` is switched to the new
+thread: dropping the lock guard also drops its embedded
 `PreemptDisableGuard`, which decrements `preempt_disable_count` via
 `Arch::thread_local_state()` -- if `THREAD_LOCAL_STATE` already points at
 the new thread by then, this decrements the new (fresh, zeroed) thread's
 counter instead, underflowing it.
-
-Change-Id: I7d1f5f5cbf4e5b2c8d2b1a0e6d1a5f4c3b2a1908
 ---
- pw_kernel/arch/riscv/exceptions.rs | 26 +++++++++++++-
- pw_kernel/arch/riscv/threads.rs    | 105 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++
- 2 files changed, 129 insertions(+), 2 deletions(-)
+ pw_kernel/arch/riscv/exceptions.rs |  36 ++++++++++-
+ pw_kernel/arch/riscv/threads.rs    | 122 ++++++++++++++++++++++++++++++++++++-
+ 2 files changed, 154 insertions(+), 4 deletions(-)
 
 diff --git a/pw_kernel/arch/riscv/exceptions.rs b/pw_kernel/arch/riscv/exceptions.rs
-index daaeeba..d0ccd54 100644
+index daaeebaa0..77a33b153 100644
 --- a/pw_kernel/arch/riscv/exceptions.rs
 +++ b/pw_kernel/arch/riscv/exceptions.rs
-@@ -36,6 +36,20 @@ use crate::veer_pic as pic;
-
+@@ -36,6 +36,23 @@ use crate::veer_pic as pic;
+ 
  const LOG_EXCEPTIONS: bool = false;
-
-+/// Set for the duration of dispatching a hardware interrupt (not a
-+/// syscall/exception) through `interrupt_handler`, below.
+ 
++/// Nesting depth of hardware interrupt dispatch (not syscalls/exceptions)
++/// through `interrupt_handler`, below; zero in thread context.
 +///
 +/// Read by `Arch::context_switch` (`threads.rs`) to decide whether a wake
-+/// triggered from inside this interrupt must defer its context switch
-+/// rather than perform it immediately -- see
++/// triggered from inside an interrupt must defer its context switch rather
++/// than perform it immediately -- see
 +/// `threads::complete_deferred_context_switch` for why.
-+static IN_HW_INTERRUPT: core::sync::atomic::AtomicBool =
-+    core::sync::atomic::AtomicBool::new(false);
++///
++/// Not an atomic: single hart, and every access happens with `mstatus.MIE`
++/// clear. A counter would also need read-modify-write atomics, which targets
++/// built without the RISC-V A extension lack.
++static mut HW_INTERRUPT_NESTING: u32 = 0;
 +
 +pub(crate) fn in_hw_interrupt() -> bool {
-+    IN_HW_INTERRUPT.load(core::sync::atomic::Ordering::Relaxed)
++    unsafe { HW_INTERRUPT_NESTING != 0 }
 +}
 +
  pub fn early_init() {
      // Explicitly set up MTVEC to point to the kernel's handler to ensure
      // that it is set to the correct mode.
-@@ -169,10 +183,22 @@ unsafe extern "C" fn trap_handler(mcause: MCauseVal, mepc: usize, frame: &mut Tr
+@@ -169,10 +186,27 @@ unsafe extern "C" fn trap_handler(mcause: MCauseVal, mepc: usize, frame: &mut Tr
      }
-
+ 
      match mcause.cause() {
 -        Cause::Interrupt(interrupt) => unsafe { interrupt_handler(interrupt, mepc, frame) },
 +        Cause::Interrupt(interrupt) => {
-+            IN_HW_INTERRUPT.store(true, core::sync::atomic::Ordering::Relaxed);
++            unsafe { HW_INTERRUPT_NESTING += 1 };
 +            unsafe { interrupt_handler(interrupt, mepc, frame) };
-+            IN_HW_INTERRUPT.store(false, core::sync::atomic::Ordering::Relaxed);
++            // Decrement before the completion below: it parks this trap
++            // frame until the thread is scheduled again, so a later decrement
++            // would not pair with the increment above.
++            let nesting = unsafe { HW_INTERRUPT_NESTING };
++            pw_assert::debug_assert!(nesting != 0);
++            unsafe { HW_INTERRUPT_NESTING = nesting - 1 };
 +        }
          Cause::Exception(exception) => exception_handler(exception, mepc, frame),
      }
-
-+    // Complete any context switch that `Arch::context_switch` deferred while
-+    // the hardware interrupt above was being dispatched. Must run after
-+    // `IN_HW_INTERRUPT` is cleared: by this point every RAII guard taken
-+    // while handling the interrupt (object lock, wait-queue lock, scheduler
-+    // lock) has unwound normally, so it's safe to perform the switch here.
-+    // No-op if no switch was deferred.
-+    crate::threads::complete_deferred_context_switch();
+ 
++    // Complete any switch `Arch::context_switch` deferred, but only when
++    // unwinding the outermost interrupt: while nested, the handler that was
++    // interrupted still holds RAII guards on the stack, which is what makes
++    // switching unsafe. No-op if nothing was deferred.
++    if !in_hw_interrupt() {
++        crate::threads::complete_deferred_context_switch();
++    }
 +
      #[cfg(feature = "exceptions_reload_pmp")]
      {
          use kernel::Kernel;
 diff --git a/pw_kernel/arch/riscv/threads.rs b/pw_kernel/arch/riscv/threads.rs
-index 285d2fc..798e72c 100644
+index 285d2fc0f..3f8375b29 100644
 --- a/pw_kernel/arch/riscv/threads.rs
 +++ b/pw_kernel/arch/riscv/threads.rs
 @@ -17,8 +17,8 @@ use core::mem;
  use core::ptr::NonNull;
-
+ 
  use exit_status::ExitStatus;
 -use kernel::Arch;
  use kernel::interrupt_controller::InterruptController;
@@ -111,7 +145,7 @@ index 285d2fc..798e72c 100644
  use kernel::scheduler::{self, SchedulerState, Stack, ThreadLocalState};
  use kernel::sync::spinlock::SpinLockGuard;
  use log_if::debug_if;
-@@ -37,6 +37,31 @@ const LOG_THREAD_CREATE: bool = false;
+@@ -37,6 +37,18 @@ const LOG_THREAD_CREATE: bool = false;
  static BOOT_THREAD_LOCAL_STATE: ThreadLocalState<crate::Arch> = ThreadLocalState::new();
  static mut THREAD_LOCAL_STATE: NonNull<ThreadLocalState<crate::Arch>> =
      NonNull::from_ref(&BOOT_THREAD_LOCAL_STATE);
@@ -127,26 +161,13 @@ index 285d2fc..798e72c 100644
 +// after the interrupt handler has fully returned.
 +static mut DEFERRED_OLD_THREAD: *mut ArchThreadState = core::ptr::null_mut();
 +
-+// The thread `DEFERRED_OLD_THREAD` should switch to once its context switch
-+// is completed. Unlike `DEFERRED_OLD_THREAD` (which keeps the *first*
-+// deferred switch's outgoing thread -- the one actually physically
-+// running), this is overwritten on every deferred call within the same
-+// interrupt: it always reflects the scheduler's latest decision of who
-+// should end up running, exactly like `SchedulerState::current_arch_thread_state`
-+// does for non-deferred switches. Stashing it here (rather than having
-+// `complete_deferred_context_switch` re-read it from the scheduler) avoids
-+// re-acquiring the scheduler lock from `trap_handler`'s tail, which would
-+// race the possibility that the *outgoing* thread's own last voluntary
-+// block is still holding it pending its own resumption.
-+static mut DEFERRED_NEW_THREAD: *mut ArchThreadState = core::ptr::null_mut();
-+
  #[repr(C)]
  struct ContextSwitchFrame {
      ra: usize,
-@@ -162,6 +187,30 @@ impl Arch for super::Arch {
+@@ -162,6 +174,29 @@ impl Arch for super::Arch {
              unsafe { (*new_thread_state).frame } as usize,
          );
-
+ 
 +        // A cooperative (ret-based) fiber switch is only safe to perform
 +        // from an ordinary function-call context, where the compiler has
 +        // already saved caller-saved registers around the call site and no
@@ -166,7 +187,6 @@ index 285d2fc..798e72c 100644
 +                if DEFERRED_OLD_THREAD.is_null() {
 +                    DEFERRED_OLD_THREAD = old_thread_state;
 +                }
-+                DEFERRED_NEW_THREAD = new_thread_state;
 +            }
 +            return (sched_state, false);
 +        }
@@ -174,10 +194,10 @@ index 285d2fc..798e72c 100644
          // Memory config is swapped before the context switch instead of after.
          // This avoids needing a special case in the user mode thread init to
          // initialize the config.
-@@ -182,15 +231,35 @@ impl Arch for super::Arch {
+@@ -182,15 +217,35 @@ impl Arch for super::Arch {
              unsafe { (*(*new_thread_state).memory_config).write() };
          }
-
+ 
 -        unsafe { THREAD_LOCAL_STATE = NonNull::from_ref(&(*new_thread_state).local) }
 -
          // Note: there is a small window of time where the new memory configuration
@@ -209,13 +229,13 @@ index 285d2fc..798e72c 100644
 +
          riscv_context_switch(old_thread_frame, new_thread_frame);
 +        let sched_state = crate::Arch.get_scheduler().lock(crate::Arch);
-
+ 
          (sched_state, true)
      }
-@@ -233,6 +302,61 @@ impl Arch for super::Arch {
+@@ -233,6 +288,67 @@ impl Arch for super::Arch {
      }
  }
-
+ 
 +/// Completes a context switch that `Arch::context_switch` deferred because it
 +/// was invoked from a hardware interrupt handler (see `DEFERRED_OLD_THREAD`
 +/// above).
@@ -237,20 +257,26 @@ index 285d2fc..798e72c 100644
 +        return;
 +    }
 +
-+    // The thread the deferred wake(s) decided should run -- stashed by
-+    // `Arch::context_switch` alongside `old_thread` above. The scheduling
-+    // *decision* was already made inline, when `SchedulerState::set_current_thread`
-+    // ran during the original wake, so this doesn't need to re-run
-+    // scheduling, only read back who won. It's read from the stash rather
-+    // than freshly re-locking the scheduler (as Cortex-M's `pendsv_swap_sp`
-+    // does) because `old_thread`'s own last voluntary block may still be
-+    // holding that lock pending its own resumption.
-+    let new_thread = unsafe {
-+        let t = DEFERRED_NEW_THREAD;
-+        DEFERRED_NEW_THREAD = core::ptr::null_mut();
-+        t
-+    };
-+    pw_assert::assert!(!new_thread.is_null());
++    // The wake(s) that deferred this switch already ran the scheduler and
++    // recorded their decision in `current_arch_thread_state`; read back who
++    // won, as Cortex-M's `pendsv_swap_sp` does. The lock is guaranteed
++    // uncontended here: holding it disables interrupts, so this trap cannot
++    // have fired inside a scheduler-lock critical section. It must be
++    // dropped again before switching away -- both to avoid handing a live
++    // guard to the incoming thread and because the drop decrements
++    // `preempt_disable_count` through `THREAD_LOCAL_STATE`, which still
++    // points at `old_thread`'s counter (see `Arch::context_switch`).
++    let mut sched_state = crate::Arch.get_scheduler().lock(crate::Arch);
++    // Safety: `new_thread` remains current until the switch below; interrupts
++    // stay disabled for the rest of the trap, so no wake can change it.
++    let new_thread = unsafe { sched_state.get_current_arch_thread_state() };
++    drop(sched_state);
++
++    if new_thread == old_thread {
++        // Later wake(s) in the same interrupt re-selected the interrupted
++        // thread; nothing to switch.
++        return;
++    }
 +
 +    debug_if!(
 +        LOG_CONTEXT_SWITCH,
@@ -277,4 +303,3 @@ index 285d2fc..798e72c 100644
 --
 2.34.1
 
-</content>
