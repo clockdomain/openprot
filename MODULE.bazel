@@ -22,7 +22,7 @@ local_path_override(
 
 git_override(
     module_name = "pigweed",
-    commit = "f540ae6c33424230ed2d388599efa89b6baacf80",
+    commit = "79c3ff65f0c48c7c99a8806587ca23dd0b296b98",
     patch_args = ["-p1"],
     patches = [
         # Program the VeeR external-interrupt redirect table (MEIVT) in
