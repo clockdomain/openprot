@@ -62,6 +62,26 @@ pub const FD_MAX_MSG: usize = 1024;
 /// within this window is expected and is not treated as an error.
 const RESPONDER_POLL_TIMEOUT_MILLIS: u32 = 1;
 
+/// Choose the responder listener's poll timeout for one iteration.
+///
+/// While an initiator request is active the poll is short so the transfer
+/// keeps moving. Otherwise it is the caller's `timeout_millis`, capped by any
+/// servicing interval the event sink requires
+/// ([`FdEventSink::max_service_interval_millis`]).
+fn responder_poll_timeout(
+    initiator_active: bool,
+    timeout_millis: u32,
+    service_interval_millis: Option<u32>,
+) -> u32 {
+    if initiator_active {
+        return RESPONDER_POLL_TIMEOUT_MILLIS;
+    }
+    match service_interval_millis {
+        Some(cap) => timeout_millis.min(cap),
+        None => timeout_millis,
+    }
+}
+
 /// Update-lifecycle notification out of the PLDM FD state machine, one per
 /// state-machine edge.
 ///
@@ -95,6 +115,36 @@ pub enum FdEvent {
 pub trait FdEventSink {
     /// Receive one FD lifecycle event.
     fn notify(&mut self, event: FdEvent);
+
+    /// Run any work the sink owes its own peers, once per terminus-loop
+    /// iteration.
+    ///
+    /// [`notify`](Self::notify) only fires on an FD state-machine edge, but a
+    /// sink that fronts an IPC channel also has to answer requests that arrive
+    /// between edges. This is where it gets the cycles to do that. It must not
+    /// block: the terminus loop's responder poll is what keeps the Update
+    /// Agent serviced, and a sink that parks here stalls it.
+    ///
+    /// Defaults to doing nothing, so a sink that only consumes events is
+    /// unaffected.
+    fn service(&mut self) {}
+
+    /// The longest the terminus loop may go between [`service`](Self::service)
+    /// calls, in milliseconds, or `None` for "no constraint".
+    ///
+    /// A sink fronting an IPC channel has a peer waiting on a bounded
+    /// deadline, and the loop's idle responder poll would otherwise park for
+    /// the caller's full `timeout_millis` — long enough for that peer to time
+    /// out and write the FD off as dead while it is merely waiting for a UA
+    /// command. Returning `Some` caps the idle poll so servicing stays inside
+    /// the peer's patience.
+    ///
+    /// It is a cap, never an extension: the loop takes the smaller of this and
+    /// `timeout_millis`. Defaulting to `None` keeps a sink with no peer from
+    /// paying for a faster idle poll it does not need.
+    fn max_service_interval_millis(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// Drop update notifications, for callers with no orchestration to notify.
@@ -233,6 +283,10 @@ impl<'a, O: FdOps, Cr: MctpClient, Cq: MctpClient> FirmwareDevice<'a, O, Cr, Cq>
         let mut fw_buf = [0u8; FD_MAX_MSG];
 
         loop {
+            // Phase 0: give the event sink its slice. A sink fronting an IPC
+            // channel answers its peer here, between FD state-machine edges.
+            sink.service();
+
             // Phase 1: while in initiator mode, issue at most ONE outbound
             // request per iteration. We deliberately fall through to the
             // responder poll below (no `continue`) so an Update Agent command
@@ -267,11 +321,11 @@ impl<'a, O: FdOps, Cr: MctpClient, Cq: MctpClient> FirmwareDevice<'a, O, Cr, Cq>
             // because responses may be larger than the request they answer
             // (e.g. GetTid: 4-byte request, 5-byte response). Commands from
             // any EID other than `remote_eid` are dropped without a response.
-            let poll_timeout = if initiator_active {
-                RESPONDER_POLL_TIMEOUT_MILLIS
-            } else {
-                timeout_millis
-            };
+            let poll_timeout = responder_poll_timeout(
+                initiator_active,
+                timeout_millis,
+                sink.max_service_interval_millis(),
+            );
             responder_listener.set_timeout(poll_timeout);
             // Sampled around the responder poll: `RequestUpdate` is the only
             // command that takes the FD out of `Idle`, so the false→true edge
@@ -304,5 +358,57 @@ impl<'a, O: FdOps, Cr: MctpClient, Cq: MctpClient> FirmwareDevice<'a, O, Cr, Cq>
                 Err(e) => return Err(e),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A sink with a peer waiting on it, e.g. the notify server-runtime.
+    struct ChannelSink(u32);
+
+    impl FdEventSink for ChannelSink {
+        fn notify(&mut self, _event: FdEvent) {}
+        fn max_service_interval_millis(&self) -> Option<u32> {
+            Some(self.0)
+        }
+    }
+
+    #[test]
+    fn an_active_transfer_always_polls_fast() {
+        // The short poll keeps the transfer moving; a sink's cap is not
+        // allowed to slow it down.
+        assert_eq!(
+            responder_poll_timeout(true, 1000, None),
+            RESPONDER_POLL_TIMEOUT_MILLIS
+        );
+        assert_eq!(
+            responder_poll_timeout(true, 1000, Some(500)),
+            RESPONDER_POLL_TIMEOUT_MILLIS
+        );
+    }
+
+    #[test]
+    fn an_idle_loop_with_no_sink_constraint_is_unchanged() {
+        // The pre-existing behaviour for `()` and UpdateRequestLatch.
+        assert_eq!(responder_poll_timeout(false, 1000, None), 1000);
+    }
+
+    #[test]
+    fn a_sink_with_a_peer_caps_the_idle_poll() {
+        assert_eq!(responder_poll_timeout(false, 1000, Some(10)), 10);
+    }
+
+    #[test]
+    fn the_cap_never_extends_the_poll() {
+        // A cap longer than the caller's timeout must not lengthen the wait.
+        assert_eq!(responder_poll_timeout(false, 5, Some(1000)), 5);
+    }
+
+    #[test]
+    fn the_default_sink_declares_no_constraint() {
+        assert_eq!(().max_service_interval_millis(), None);
+        assert_eq!(ChannelSink(25).max_service_interval_millis(), Some(25));
     }
 }
