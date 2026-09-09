@@ -16,8 +16,43 @@
 //! `PushStatus` carry a one-byte payload. `Poll`'s response payload is an
 //! encoded [`Pending`] on success, or an empty payload with status
 //! [`NotifyError::NoPending`] when nothing is latched.
+//!
+//! Every enum here is intentionally exhaustive (not `#[non_exhaustive]`),
+//! matching `orchestrator-capabilities`: adding a variant is a breaking
+//! change, and the compiler forcing every consumer to handle it is the point
+//! — most of all the orchestrator's `pending_to_event`, where an unhandled
+//! `Pending` must not quietly become "no event".
+//!
+//! Openness to *unknown wire bytes* is a separate concern, and it is handled
+//! where it belongs: the `TryFrom<u8>` impls below reject a byte this build
+//! does not know. The wire is open; the types are closed.
 
 use zerocopy::{FromBytes, Immutable, IntoBytes, KnownLayout};
+
+/// Longest PLDM may go between servicing this channel, in milliseconds.
+///
+/// PLDM answers this channel from its terminus loop, between Update Agent
+/// commands, so its responsiveness is bounded by how often that loop comes
+/// around. The FD caps its idle MCTP poll at this value
+/// (`FdEventSink::max_service_interval_millis`) so a subscribed supervisor is
+/// never left waiting longer.
+///
+/// This is one half of a contract with [`MIN_TRANSACT_TIMEOUT_MILLIS`]; the
+/// two live together here, rather than as unrelated constants at each end,
+/// because the relationship between them is the thing that matters.
+pub const MAX_SERVICE_INTERVAL_MILLIS: u32 = 10;
+
+/// Smallest sane bounded deadline for an Orchestrator -> PLDM round-trip, in
+/// milliseconds.
+///
+/// A round-trip costs up to [`MAX_SERVICE_INTERVAL_MILLIS`] waiting for PLDM's
+/// loop to come around, plus the transaction itself. A deadline at or below
+/// that interval would time out against a perfectly healthy PLDM that is
+/// merely parked on its MCTP poll — and since the supervisor's health verdict
+/// is one-way, it would condemn the peer permanently on a schedule, not on a
+/// fault. Keep a wide margin: this is the supervisor's patience with an
+/// answering peer, not a transfer budget.
+pub const MIN_TRANSACT_TIMEOUT_MILLIS: u32 = 50;
 
 /// Max payload bytes after either header (the largest is `Pending::Offer`).
 pub const MAX_PAYLOAD_SIZE: usize = 9;
@@ -25,7 +60,6 @@ pub const MAX_PAYLOAD_SIZE: usize = 9;
 /// One request/response buffer size: header + max payload, rounded up.
 pub const MAX_BUF_SIZE: usize = 32;
 
-#[non_exhaustive]
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotifyOp {
@@ -54,7 +88,6 @@ impl TryFrom<u8> for NotifyOp {
 }
 
 /// Orchestrator's accept/reject answer to a pending `UpdateRequested`.
-#[non_exhaustive]
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Decision {
@@ -75,7 +108,6 @@ impl TryFrom<u8> for Decision {
 }
 
 /// Update-progress phase the orchestrator pushes to PLDM via `PushStatus`.
-#[non_exhaustive]
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
@@ -104,7 +136,6 @@ impl TryFrom<u8> for Phase {
 }
 
 /// An event PLDM latches for the orchestrator to drain via `Poll`.
-#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pending {
     UpdateRequested,
@@ -153,10 +184,14 @@ impl Pending {
                 let total = buf.get(5..9).ok_or(NotifyError::InvalidOperation)?;
                 Ok(Self::Offer {
                     target: u32::from_le_bytes(
-                        target.try_into().map_err(|_| NotifyError::InvalidOperation)?,
+                        target
+                            .try_into()
+                            .map_err(|_| NotifyError::InvalidOperation)?,
                     ),
                     total: u32::from_le_bytes(
-                        total.try_into().map_err(|_| NotifyError::InvalidOperation)?,
+                        total
+                            .try_into()
+                            .map_err(|_| NotifyError::InvalidOperation)?,
                     ),
                 })
             }
@@ -164,7 +199,9 @@ impl Pending {
                 let written = buf.get(1..5).ok_or(NotifyError::InvalidOperation)?;
                 Ok(Self::Complete {
                     written: u32::from_le_bytes(
-                        written.try_into().map_err(|_| NotifyError::InvalidOperation)?,
+                        written
+                            .try_into()
+                            .map_err(|_| NotifyError::InvalidOperation)?,
                     ),
                 })
             }
@@ -176,7 +213,6 @@ impl Pending {
 }
 
 /// Status / error code carried in `NotifyResponseHeader`.
-#[non_exhaustive]
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotifyError {
@@ -393,9 +429,6 @@ mod tests {
             Pending::decode(&[0x01, 0, 0]),
             Err(NotifyError::InvalidOperation)
         );
-        assert_eq!(
-            Pending::decode(&[0xFF]),
-            Err(NotifyError::InvalidOperation)
-        );
+        assert_eq!(Pending::decode(&[0xFF]), Err(NotifyError::InvalidOperation));
     }
 }

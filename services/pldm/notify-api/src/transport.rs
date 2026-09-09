@@ -14,7 +14,6 @@
 
 /// Why a transport round-trip failed. Transport-neutral; notify-level status
 /// travels inside the response payload, not here.
-#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransportError {
     /// The underlying channel/syscall/loopback call failed.

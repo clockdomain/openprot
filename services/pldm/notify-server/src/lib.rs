@@ -123,7 +123,11 @@ pub fn dispatch(state: &mut NotifyState, request: &[u8], response: &mut [u8]) ->
 mod tests {
     use super::*;
 
-    fn call(state: &mut NotifyState, op: NotifyOp, payload: &[u8]) -> (NotifyResponseHeader, [u8; 32]) {
+    fn call(
+        state: &mut NotifyState,
+        op: NotifyOp,
+        payload: &[u8],
+    ) -> (NotifyResponseHeader, [u8; 32]) {
         let hdr = NotifyRequestHeader::new(op, payload.len() as u16);
         let mut req = [0u8; 32];
         req[..NotifyRequestHeader::SIZE].copy_from_slice(zerocopy::IntoBytes::as_bytes(&hdr));
@@ -133,9 +137,10 @@ mod tests {
 
         let mut resp = [0u8; 32];
         let n = dispatch(state, &req[..req_len], &mut resp);
-        let rhdr =
-            *zerocopy::Ref::<_, NotifyResponseHeader>::from_bytes(&resp[..NotifyResponseHeader::SIZE])
-                .unwrap();
+        let rhdr = *zerocopy::Ref::<_, NotifyResponseHeader>::from_bytes(
+            &resp[..NotifyResponseHeader::SIZE],
+        )
+        .unwrap();
         assert!(n >= NotifyResponseHeader::SIZE);
         (rhdr, resp)
     }
@@ -185,9 +190,10 @@ mod tests {
         let mut resp = [0u8; 32];
         let n = dispatch(&mut state, &[0u8; 1], &mut resp);
         assert_eq!(n, NotifyResponseHeader::SIZE);
-        let rhdr =
-            zerocopy::Ref::<_, NotifyResponseHeader>::from_bytes(&resp[..NotifyResponseHeader::SIZE])
-                .unwrap();
+        let rhdr = zerocopy::Ref::<_, NotifyResponseHeader>::from_bytes(
+            &resp[..NotifyResponseHeader::SIZE],
+        )
+        .unwrap();
         assert_eq!(rhdr.error_code(), Some(NotifyError::InvalidOperation));
     }
 }
