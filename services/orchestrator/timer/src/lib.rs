@@ -4,9 +4,9 @@
 //! Watchdog bookkeeping for the orchestrator runtime.
 //!
 //! [`TimerManager`] multiplexes a set of logical deadlines — up to `N`
-//! per-component boot-progress watchdogs plus one activated-but-not-committed
-//! commit watchdog — onto the single deadline the runtime passes to
-//! `syscall::object_wait`. It owns no clock and no policy: the runtime supplies
+//! per-component boot-progress watchdogs, one activated-but-not-committed
+//! commit watchdog, and one peer-poll cadence — onto the single deadline the
+//! runtime passes to `syscall::object_wait`. It owns no clock and no policy: the runtime supplies
 //! absolute deadlines (it knows the clock and the per-component boot windows),
 //! and this type only tracks which deadline is nearest and reports which
 //! watchdog expired as an [`Expired`].
@@ -39,6 +39,12 @@ pub enum Expired<Id> {
     Boot(Id),
     /// The commit watchdog fired.
     Commit,
+    /// The peer-poll cadence came due: the runtime should poll its notify peer
+    /// even though no signal woke it. Unlike [`Boot`](Self::Boot) and
+    /// [`Commit`](Self::Commit) this is not a watchdog — nothing has gone
+    /// wrong, it is simply time to ask again — so a runtime re-arms it after
+    /// each poll rather than treating it as a failure.
+    Poll,
 }
 
 /// One armed boot-progress watchdog: which component, and when it is due.
@@ -47,15 +53,17 @@ struct BootDeadline<T, Id> {
     at: T,
 }
 
-/// Multiplexes the orchestrator's boot and commit watchdogs onto one deadline.
+/// Multiplexes the orchestrator's boot and commit watchdogs and its peer-poll
+/// cadence onto one deadline.
 ///
 /// `N` bounds the boot watchdogs to the chain length: a speculative `Passive`
 /// walk can leave every released component awaiting its boot-progress signal at
-/// once, so at most `N` are armed together. The commit watchdog is a single
-/// slot.
+/// once, so at most `N` are armed together. The commit watchdog and the poll
+/// cadence are single slots.
 pub struct TimerManager<T, Id, const N: usize> {
     boot: heapless::Vec<BootDeadline<T, Id>, N>,
     commit: Option<T>,
+    poll_at: Option<T>,
 }
 
 impl<T: Copy + Ord, Id: Copy + Eq, const N: usize> TimerManager<T, Id, N> {
@@ -63,6 +71,7 @@ impl<T: Copy + Ord, Id: Copy + Eq, const N: usize> TimerManager<T, Id, N> {
         Self {
             boot: heapless::Vec::new(),
             commit: None,
+            poll_at: None,
         }
     }
 
@@ -107,14 +116,33 @@ impl<T: Copy + Ord, Id: Copy + Eq, const N: usize> TimerManager<T, Id, N> {
         self.commit = None;
     }
 
+    /// Arm (or re-arm) the peer-poll cadence to come due at `deadline`.
+    ///
+    /// One-shot like the watchdogs: a runtime that wants a recurring cadence
+    /// re-arms it after each poll. Keeping it one-shot means a runtime that
+    /// stops polling an unhealthy peer simply stops re-arming, with no separate
+    /// disable path to get out of step with.
+    pub fn arm_poll(&mut self, deadline: T) {
+        self.poll_at = Some(deadline);
+    }
+
+    /// Cancel the peer-poll cadence. No-op if it is not armed. Called when a
+    /// peer is declared unhealthy so the loop stops waking to poll a dead peer.
+    pub fn cancel_poll(&mut self) {
+        self.poll_at = None;
+    }
+
     /// The nearest outstanding deadline, or `None` when nothing is armed. Feed
     /// this to the runtime's `object_wait` as its deadline.
     pub fn next_deadline(&self) -> Option<T> {
-        let boot = self.boot.iter().map(|d| d.at).min();
-        match (boot, self.commit) {
-            (Some(b), Some(c)) => Some(b.min(c)),
-            (b, c) => b.or(c),
-        }
+        [
+            self.boot.iter().map(|d| d.at).min(),
+            self.commit,
+            self.poll_at,
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     /// Pop the single nearest watchdog that is due at `now`, remove it, and
@@ -122,9 +150,11 @@ impl<T: Copy + Ord, Id: Copy + Eq, const N: usize> TimerManager<T, Id, N> {
     /// loop until `None` to drain every deadline that has passed this tick; a
     /// fired watchdog is one-shot and gone until re-armed.
     ///
-    /// When a boot and the commit watchdog are due together the boot one is
-    /// reported first, matching `next_deadline`'s tie-break so a caller draining
-    /// in a loop sees a consistent order.
+    /// Deadlines due at the same instant are reported boot first, then commit,
+    /// then poll, so a caller draining in a loop sees a consistent order. The
+    /// two watchdogs come before the poll cadence deliberately: a missed boot
+    /// or commit deadline is a safety obligation, while a poll is only a
+    /// cadence tick that stays due until it is drained.
     pub fn poll(&mut self, now: T) -> Option<Expired<Id>> {
         let earliest_boot = self
             .boot
@@ -133,22 +163,31 @@ impl<T: Copy + Ord, Id: Copy + Eq, const N: usize> TimerManager<T, Id, N> {
             .filter(|(_, d)| d.at <= now)
             .min_by(|(_, a), (_, b)| a.at.cmp(&b.at))
             .map(|(i, d)| (i, d.at, d.id));
-        let commit_due = self.commit.filter(|&c| c <= now);
 
-        match (earliest_boot, commit_due) {
-            (Some((i, b_at, id)), Some(c_at)) if b_at <= c_at => {
+        // (deadline, class rank) — nearest wins, rank breaks a tie.
+        let due = [
+            earliest_boot.map(|(_, at, _)| (at, 0u8)),
+            self.commit.filter(|&c| c <= now).map(|at| (at, 1)),
+            self.poll_at.filter(|&p| p <= now).map(|at| (at, 2)),
+        ];
+        let (_, class) = due
+            .into_iter()
+            .flatten()
+            .min_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)))?;
+
+        match class {
+            0 => earliest_boot.map(|(i, _, id)| {
                 self.boot.swap_remove(i);
-                Some(Expired::Boot(id))
-            }
-            (_, Some(_)) => {
+                Expired::Boot(id)
+            }),
+            1 => {
                 self.commit = None;
                 Some(Expired::Commit)
             }
-            (Some((i, _, id)), None) => {
-                self.boot.swap_remove(i);
-                Some(Expired::Boot(id))
+            _ => {
+                self.poll_at = None;
+                Some(Expired::Poll)
             }
-            (None, None) => None,
         }
     }
 }
@@ -277,5 +316,77 @@ mod tests {
         tm.arm_boot(C0, 10).unwrap();
         tm.arm_boot(C1, 10).unwrap();
         assert_eq!(tm.arm_boot(2, 10), Err(Full));
+    }
+
+    #[test]
+    fn poll_cadence_folds_into_next_deadline() {
+        let mut tm = Tm::new();
+        tm.arm_boot(C0, 50).unwrap();
+        tm.arm_commit(40);
+        tm.arm_poll(30);
+        assert_eq!(tm.next_deadline(), Some(30));
+    }
+
+    #[test]
+    fn poll_expiry_yields_poll_once() {
+        let mut tm = Tm::new();
+        tm.arm_poll(20);
+        assert_eq!(tm.poll(20), Some(Expired::Poll));
+        // One-shot: the runtime re-arms the cadence after each poll.
+        assert_eq!(tm.poll(20), None);
+        assert_eq!(tm.next_deadline(), None);
+    }
+
+    #[test]
+    fn cancel_poll_disarms() {
+        let mut tm = Tm::new();
+        tm.arm_poll(20);
+        tm.cancel_poll();
+        assert_eq!(tm.poll(20), None);
+        assert_eq!(tm.next_deadline(), None);
+    }
+
+    #[test]
+    fn rearm_poll_replaces_deadline() {
+        let mut tm = Tm::new();
+        tm.arm_poll(10);
+        tm.arm_poll(50);
+        assert_eq!(tm.poll(10), None);
+        assert_eq!(tm.poll(50), Some(Expired::Poll));
+        assert_eq!(tm.poll(50), None);
+    }
+
+    #[test]
+    fn watchdogs_are_reported_before_poll_on_a_tie() {
+        let mut tm = Tm::new();
+        tm.arm_poll(20);
+        tm.arm_commit(20);
+        tm.arm_boot(C0, 20).unwrap();
+        assert_eq!(tm.poll(20), Some(Expired::Boot(C0)));
+        assert_eq!(tm.poll(20), Some(Expired::Commit));
+        assert_eq!(tm.poll(20), Some(Expired::Poll));
+        assert_eq!(tm.poll(20), None);
+    }
+
+    #[test]
+    fn nearer_poll_beats_a_later_watchdog() {
+        let mut tm = Tm::new();
+        tm.arm_boot(C0, 50).unwrap();
+        tm.arm_poll(10);
+        assert_eq!(tm.poll(50), Some(Expired::Poll));
+        assert_eq!(tm.poll(50), Some(Expired::Boot(C0)));
+    }
+
+    #[test]
+    fn poll_does_not_disturb_armed_watchdogs() {
+        let mut tm = Tm::new();
+        tm.arm_boot(C0, 100).unwrap();
+        tm.arm_commit(100);
+        tm.arm_poll(10);
+        assert_eq!(tm.poll(10), Some(Expired::Poll));
+        // Both watchdogs survive the poll tick untouched.
+        assert_eq!(tm.next_deadline(), Some(100));
+        assert_eq!(tm.poll(100), Some(Expired::Boot(C0)));
+        assert_eq!(tm.poll(100), Some(Expired::Commit));
     }
 }

@@ -5,16 +5,33 @@
 //!
 //! [`BootWatchdogs`] instantiates the host-generic [`TimerManager`] with the
 //! kernel's [`Instant`] and translates the run loop's relative boot/commit
-//! windows into the absolute deadlines the manager tracks. The absolute
-//! [`wait_deadline`](BootWatchdogs::wait_deadline) it returns is exactly the
-//! argument the loop hands to `object_wait`; after each wake the loop drains
-//! [`poll_expired`](BootWatchdogs::poll_expired) into orchestrator-sm.
+//! windows and PLDM poll cadence into the absolute deadlines the manager
+//! tracks. The absolute [`wait_deadline`](BootWatchdogs::wait_deadline) it
+//! returns is exactly the argument the loop hands to `object_wait`; after each
+//! wake the loop drains [`poll_expired`](BootWatchdogs::poll_expired).
+//!
+//! Draining yields a [`Wake`], not a bare `Event`: the two watchdogs produce
+//! orchestrator-sm events, while the poll cadence is a runtime concern the
+//! core knows nothing about. Keeping them apart is what lets the supervisor
+//! own a PLDM poll deadline without teaching the transport-free core that PLDM
+//! exists.
 
 use openprot_orchestrator_sm::{ComponentId, Event};
 use openprot_orchestrator_timer::{Expired, Full, TimerManager};
 use userspace::time::{Clock, Duration, Instant, SystemClock};
 
-/// The orchestrator's watchdogs, driven by the kernel monotonic clock.
+/// What a drained deadline means to the run loop.
+pub enum Wake {
+    /// A watchdog fired; feed this to orchestrator-sm.
+    Event(Event),
+    /// The PLDM poll cadence came due. The loop polls its notify peer and
+    /// re-arms; nothing reaches orchestrator-sm unless the poll itself yields
+    /// an event.
+    PollDue,
+}
+
+/// The orchestrator's watchdogs and poll cadence, driven by the kernel
+/// monotonic clock.
 ///
 /// `N` bounds the boot watchdogs to the chain length, matching
 /// [`TimerManager`].
@@ -59,20 +76,34 @@ impl<const N: usize> BootWatchdogs<N> {
         self.timers.cancel_commit();
     }
 
+    /// Arm the PLDM poll cadence to come due `after` from now. One-shot: the
+    /// run loop re-arms it after each poll, and simply stops re-arming once
+    /// the peer is unhealthy.
+    pub fn arm_poll(&mut self, after: Duration) {
+        self.timers.arm_poll(Self::deadline_in(after));
+    }
+
+    /// Cancel the PLDM poll cadence, so the loop stops waking to poll a peer
+    /// it has already declared unhealthy.
+    pub fn cancel_poll(&mut self) {
+        self.timers.cancel_poll();
+    }
+
     /// Absolute deadline to pass to `object_wait`; [`Instant::MAX`] when nothing
     /// is armed, so the loop blocks until a signal wakes it.
     pub fn wait_deadline(&self) -> Instant {
         self.timers.next_deadline().unwrap_or(Instant::MAX)
     }
 
-    /// Pop the next watchdog due as of now, or `None`. Call in a loop after each
+    /// Pop the next deadline due as of now, or `None`. Call in a loop after each
     /// `object_wait` return to drain every deadline that has passed this tick.
-    pub fn poll_expired(&mut self) -> Option<Event> {
+    pub fn poll_expired(&mut self) -> Option<Wake> {
         self.timers
             .poll(SystemClock::now())
             .map(|expired| match expired {
-                Expired::Boot(id) => Event::Timeout(id),
-                Expired::Commit => Event::CommitTimeout,
+                Expired::Boot(id) => Wake::Event(Event::Timeout(id)),
+                Expired::Commit => Wake::Event(Event::CommitTimeout),
+                Expired::Poll => Wake::PollDue,
             })
     }
 }

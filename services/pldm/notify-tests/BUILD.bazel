@@ -15,3 +15,18 @@ rust_test(
         "//services/pldm/notify-server:notify_server",
     ],
 )
+
+# Host end-to-end for the supervisor's half: real PldmLink marshalling ->
+# transport -> the orchestrator's classification and health policy.
+rust_test(
+    name = "notify_supervision_test",
+    srcs = ["supervision.rs"],
+    edition = "2024",
+    deps = [
+        "//services/orchestrator/adapters/pldm:orchestrator_pldm_adapter",
+        "//services/orchestrator/sm:orchestrator_sm",
+        "//services/pldm/notify-api:notify_api",
+        "//services/pldm/notify-client:notify_client",
+        "//services/pldm/notify-server:notify_server",
+    ],
+)

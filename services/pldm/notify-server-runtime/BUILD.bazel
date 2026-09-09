@@ -3,26 +3,22 @@
 
 load("@rules_rust//rust:defs.bzl", "rust_library")
 
+# The single kernel-tagged piece of the notify server path: the Pigweed channel
+# calls around the host-buildable notify_server::dispatch.
 rust_library(
-    name = "orchestrator_server",
-    srcs = [
-        "src/lib.rs",
-        "src/runtime.rs",
-        "src/supervisor.rs",
-    ],
-    crate_name = "openprot_orchestrator_server",
+    name = "notify_server_runtime",
+    srcs = ["src/lib.rs"],
     edition = "2024",
     tags = ["kernel"],
     # Any pw_kernel userspace target (ast10x0, earlgrey, veer); not the host.
     target_compatible_with = ["@platforms//os:none"],
     visibility = ["//visibility:public"],
     deps = [
-        "//services/orchestrator/adapters/pldm:orchestrator_pldm_adapter",
-        "//services/orchestrator/sm:orchestrator_sm",
-        "//services/orchestrator/timer:orchestrator_timer",
+        "//services/pldm:pldm_service",
         "//services/pldm/notify-api:notify_api",
-        "//services/pldm/notify-client:notify_client",
+        "//services/pldm/notify-server:notify_server",
         "@pigweed//pw_kernel/userspace",
         "@pigweed//pw_log/rust:pw_log",
+        "@rust_crates//:zerocopy",
     ],
 )

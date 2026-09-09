@@ -9,11 +9,16 @@
 //! multiplexes orchestrator-sm's boot and commit watchdogs onto the single
 //! deadline the runtime's `object_wait` already accepts — no separate timer
 //! task, no IPC on the arm/cancel path.
+//!
+//! [`supervisor::run`] is that loop: one park, one deadline, and the PLDM
+//! notify channel folded in as a third expiry class alongside the watchdogs.
 
 #![no_std]
 #![forbid(unsafe_code)]
 
 pub mod runtime;
+pub mod supervisor;
 
 pub use openprot_orchestrator_timer::{Full, TimerManager};
-pub use runtime::BootWatchdogs;
+pub use runtime::{BootWatchdogs, Wake};
+pub use supervisor::run;

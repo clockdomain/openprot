@@ -11,13 +11,26 @@
 //! both stacks by design — the PLDM service stays orchestrator-free and the
 //! orchestrator stays transport-free, the same rule that keeps HAL adapters
 //! out of `orchestrator-capabilities`.
+//!
+//! [`notify`] is the same bridge for the cross-process notify channel: the
+//! mapping between wire [`Pending`](notify_api::Pending) values and
+//! orchestrator-sm events, kept host-testable and out of the kernel-tagged run
+//! loop that calls it.
 
 #![cfg_attr(not(test), no_std)]
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
 
+pub mod notify;
+
 use openprot_orchestrator_sm::Event;
 use openprot_pldm_service::firmware_device::{FdEvent, FdEventSink};
+
+#[doc(inline)]
+pub use notify::{
+    classify_poll, pending_to_event, phase_for_effect, unhealthy_unwind_event, NotifySupervisor,
+    PollOutcome, Reaction,
+};
 
 /// Latches an accepted PLDM `RequestUpdate` until the orchestrator run loop
 /// drains it as [`Event::UpdateRequest`].
