@@ -1,0 +1,90 @@
+// Licensed under the Apache-2.0 license
+// SPDX-License-Identifier: Apache-2.0
+
+// AST10x0 notify-channel QEMU test: the PLDM <-> Orchestrator seam, across
+// two real processes on a real kernel.
+//
+//   notify_pldm — channel_handler; runs NotifyChannel from a loop shaped like
+//                 the PLDM terminus loop, and goes silent partway through so
+//                 the supervisor's bounded deadline is actually exercised.
+//   notify_orch — channel_initiator; runs PldmLink over the bounded
+//                 IpcTransport and calls debug_shutdown(Ok|Err).
+//
+// The orchestrator also holds a `process` object for the PLDM process. Nothing
+// restarts it yet, but registering it for JOINABLE turns "PLDM died" into a
+// named test failure instead of a hang, and the object is the hook the
+// restart-and-resubscribe work will need.
+//
+// Memory map (AST10x0: 768 KB SRAM, no XIP), same shape as tests/mctp/ipc_client:
+//   0x00000000 - 0x00000500  vector table (1280 B)
+//   0x00000500 - 0x00020500  kernel flash (~127 KB)
+//   then app flash (128 KB each)
+//   0x00060000 - 0x00080000  kernel RAM (128 KB)
+//   then app RAM (32 KB + 32 KB)
+{
+    arch: {
+        type: "armv7m",
+        vector_table_start_address: 0x00000000,
+        vector_table_size_bytes: 1280,
+    },
+    kernel: {
+        flash_start_address: 0x00000500,
+        flash_size_bytes: 129792,
+        ram_start_address: 0x00060000,
+        ram_size_bytes: 131072,
+    },
+    apps: [
+        {
+            name: "notify_pldm",
+            flash_size_bytes: 131072,
+            processes: [
+                {
+                    name: "notify_pldm_process",
+                    ram_size_bytes: 32768,
+                    objects: [
+                        {
+                            name: "notify",
+                            type: "channel_handler",
+                        },
+                        {
+                            type: "thread",
+                            name: "notify_pldm_thread",
+                            kernel_stack_size_bytes: 4096,
+                        },],
+                },
+            ],
+        },
+        {
+            name: "notify_orch",
+            flash_size_bytes: 131072,
+            processes: [
+                {
+                    name: "notify_orch_process",
+                    ram_size_bytes: 32768,
+                    objects: [
+                        {
+                            name: "wg",
+                            type: "wait_group",
+                        },
+                        {
+                            name: "notify",
+                            type: "channel_initiator",
+                            handler_process: "notify_pldm_process",
+                            handler_object_name: "notify",
+                        },
+                        // linked_process must match the process name above.
+                        {
+                            name: "pldm_process",
+                            type: "process",
+                            linked_process: "notify_pldm_process",
+                        },
+                        {
+                            type: "thread",
+                            name: "notify_orch_thread",
+                            kernel_stack_size_bytes: 4096,
+                        },],
+                },
+            ],
+        },
+    ],
+}
