@@ -110,6 +110,29 @@ pub fn send_private_write_on_stream(
     Ok(())
 }
 
+/// Send a private write whose data block is transmitted verbatim — no PEC is
+/// appended. The caller owns the entire framing, including any trailing PEC.
+///
+/// Use this when the payload is already a complete framed message (e.g. an
+/// MCTP-over-I3C frame from `MctpI3cEncap`, which carries its own PEC over a
+/// frame that begins with the destination byte). The PEC-adding
+/// [`send_private_write_on_stream`] would double-count the address in that case.
+pub fn send_private_write_raw_on_stream(
+    stream: &mut TcpStream,
+    target_addr: u8,
+    data: &[u8],
+) -> Result<(), String> {
+    let header = make_private_write_header(target_addr, data.len() as u16);
+    let mut frame = Vec::with_capacity(header.len() + data.len());
+    frame.extend_from_slice(&header);
+    frame.extend_from_slice(data);
+    stream
+        .write_all(&frame)
+        .map_err(|e| format!("failed writing raw I3C private-write frame: {e}"))?;
+    println!("I3C HOST TRACE: wrote raw frame to addr=0x{target_addr:02x} data={data:02x?}");
+    Ok(())
+}
+
 pub fn send_private_read_on_stream(stream: &mut TcpStream, target_addr: u8) -> Result<(), String> {
     let header = make_private_read_header(target_addr);
     stream
