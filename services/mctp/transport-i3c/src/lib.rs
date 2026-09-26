@@ -11,8 +11,15 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod encap;
+mod receiver;
+mod sender;
 
-pub use encap::{MctpI3cEncap, MctpI3cHeader, MCTP_I3C_COMMAND_CODE, MCTP_I3C_HEADER, MCTP_I3C_MAXMTU};
+pub use encap::{
+    decode_frame, mctp_i3c_ipc_mtu, MctpI3cEncap, MctpI3cHeader, MCTP_I3C_COMMAND_CODE,
+    MCTP_I3C_HEADER, MCTP_I3C_IPC_FRAME, MCTP_I3C_IPC_MAXMTU, MCTP_I3C_IPC_PACKET, MCTP_I3C_MAXMTU,
+};
+pub use receiver::MctpI3cReceiver;
+pub use sender::I3cSender;
 
 #[cfg(test)]
 mod tests {
@@ -91,7 +98,9 @@ mod tests {
         let payload = [0xde, 0xad, 0xbe, 0xef];
         let mut out = [0u8; 64];
 
-        let n = encap.encode(PEER, &payload, false, &mut out).expect("encode");
+        let n = encap
+            .encode(PEER, &payload, false, &mut out)
+            .expect("encode");
         assert_eq!(n, MCTP_I3C_HEADER + payload.len());
 
         // Decode from the peer's point of view: it sees itself as destination.
@@ -108,7 +117,9 @@ mod tests {
         let payload = [0x01, 0x02, 0x03];
         let mut out = [0u8; 64];
 
-        let n = encap.encode(PEER, &payload, true, &mut out).expect("encode");
+        let n = encap
+            .encode(PEER, &payload, true, &mut out)
+            .expect("encode");
         assert_eq!(n, MCTP_I3C_HEADER + payload.len() + 1);
 
         let peer = MctpI3cEncap::new(PEER);
@@ -120,7 +131,9 @@ mod tests {
     fn decode_rejects_corrupt_pec() {
         let encap = MctpI3cEncap::new(OWN);
         let mut out = [0u8; 64];
-        let n = encap.encode(PEER, &[0xaa, 0xbb], true, &mut out).expect("encode");
+        let n = encap
+            .encode(PEER, &[0xaa, 0xbb], true, &mut out)
+            .expect("encode");
 
         out[n - 1] ^= 0xff;
         assert!(MctpI3cEncap::new(PEER).decode(&out[..n], true).is_err());
@@ -130,7 +143,9 @@ mod tests {
     fn decode_rejects_byte_count_mismatch() {
         let encap = MctpI3cEncap::new(OWN);
         let mut out = [0u8; 64];
-        let n = encap.encode(PEER, &[0x11, 0x22, 0x33], false, &mut out).expect("encode");
+        let n = encap
+            .encode(PEER, &[0x11, 0x22, 0x33], false, &mut out)
+            .expect("encode");
 
         // Claim one byte more than is present.
         out[2] += 1;
@@ -157,10 +172,7 @@ mod tests {
     fn pec_matches_known_answer() {
         // Same vector as the i3c host harness's own PEC test
         // (target/veer/tests/i3c_host), which pins this polynomial.
-        assert_eq!(
-            encap::smbus_pec(&[0x10, 0x01, 0x02, 0x03, 0x04]),
-            0xd1
-        );
+        assert_eq!(encap::smbus_pec(&[0x10, 0x01, 0x02, 0x03, 0x04]), 0xd1);
     }
 
     #[test]

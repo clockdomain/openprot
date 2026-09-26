@@ -35,6 +35,7 @@
 //! four-byte transport header.
 
 use mctp::{Error, Result};
+use openprot_mctp_api::MCTP_HEADER_LEN;
 
 /// SMBus PEC: CRC-8 with polynomial 0x07, zero seed, no reflection.
 ///
@@ -62,9 +63,49 @@ pub const MCTP_I3C_COMMAND_CODE: u8 = 0x0f;
 /// Size of the encapsulation header, in bytes.
 pub const MCTP_I3C_HEADER: usize = 4;
 
-/// Largest MCTP packet that fits: the byte-count field is a `u8` and counts the
-/// source-address byte alongside the payload.
+/// DSP0233 protocol ceiling: the byte-count field is a `u8` and counts the
+/// source-address byte alongside the packet, so this bounds what a *wire frame*
+/// may legally claim — the limit [`MctpI3cEncap::encode`] and `decode` enforce
+/// on the byte count.
+///
+/// It is **not** the deliverable limit. What the i3c IPC transport can actually
+/// carry is the tighter [`mctp_i3c_ipc_mtu`]; a frame within `MCTP_I3C_MAXMTU`
+/// but over that bound is well-formed on the wire yet too large for one
+/// `I3cOp::Send`. Callers that send over the i3c service size against the IPC
+/// bound, not this one.
 pub const MCTP_I3C_MAXMTU: usize = u8::MAX as usize - 1;
+
+/// Largest MCTP *payload* per packet that fits one i3c IPC frame, given whether
+/// a PEC byte is appended. This is what `I3cSender::get_mtu` reports.
+///
+/// The i3c service carries one framed packet per `I3cOp::Send`, capped at
+/// `i3c_api::MAX_PAYLOAD` — the caliptra i3c-core private write limit, which is
+/// hardware and cannot move. `Fragmenter::fragment_vectored` emits a packet of
+/// `mtu + MCTP_HEADER_LEN` bytes, so the MCTP transport header is already
+/// inside what [`MctpI3cEncap::encode`] frames:
+///
+/// ```text
+/// 4 (I3C header) + 4 (MCTP header) + payload + pec <= 250
+///   => payload <= 250 - 4 - 4 - pec   (241 with PEC, 242 without)
+/// ```
+///
+/// Derived from `i3c_api::MAX_PAYLOAD` rather than a literal so it tracks the
+/// hardware limit, and takes `pec` so it does not silently assume one.
+pub const fn mctp_i3c_ipc_mtu(pec: bool) -> usize {
+    i3c_api::MAX_PAYLOAD - MCTP_I3C_HEADER - MCTP_HEADER_LEN - pec as usize
+}
+
+/// The i3c IPC MTU with a PEC appended (241) — the smaller of the two cases,
+/// used where a single figure is wanted (tests, docs).
+pub const MCTP_I3C_IPC_MAXMTU: usize = mctp_i3c_ipc_mtu(true);
+
+/// Buffer size `Fragmenter::fragment_vectored` requires — it refuses to emit
+/// into anything smaller than `mtu + MCTP_HEADER_LEN`. Sized for the larger,
+/// no-PEC MTU so one buffer serves both cases.
+pub const MCTP_I3C_IPC_PACKET: usize = mctp_i3c_ipc_mtu(false) + MCTP_HEADER_LEN;
+
+/// Largest whole framed packet the transport ever hands to `I3cOp::Send`.
+pub const MCTP_I3C_IPC_FRAME: usize = i3c_api::MAX_PAYLOAD;
 
 /// A decoded MCTP-over-I3C transport header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +162,40 @@ impl MctpI3cHeader {
     }
 }
 
+/// Strip the MCTP-over-I3C transport header from an inbound private write.
+///
+/// When `pec` is set the trailing PEC byte is verified and removed first.
+/// Returns the inner MCTP packet and the decoded header.
+///
+/// Decoding needs no local address — the controller has already directed the
+/// private write at one target's dynamic address — so this is a free function,
+/// not a method. Fails if the PEC is wrong, the header is malformed, or the
+/// byte-count field disagrees with the actual packet length.
+pub fn decode_frame(mut packet: &[u8], pec: bool) -> Result<(&[u8], MctpI3cHeader)> {
+    if packet.is_empty() {
+        return Err(Error::InvalidInput);
+    }
+
+    if pec {
+        let (packet_pec, rest) = packet.split_last().ok_or(Error::InvalidInput)?;
+        if smbus_pec(rest) != *packet_pec {
+            return Err(Error::InvalidInput);
+        }
+        packet = rest;
+    }
+
+    let header = MctpI3cHeader::decode(packet.get(..MCTP_I3C_HEADER).ok_or(Error::InvalidInput)?)?;
+
+    // byte_count covers everything after the count field except the PEC:
+    // the source byte plus the MCTP packet. Adding back dest, command and
+    // count gives the full framed length.
+    if header.byte_count + 3 != packet.len() {
+        return Err(Error::InvalidInput);
+    }
+
+    Ok((&packet[MCTP_I3C_HEADER..], header))
+}
+
 /// Adds and removes the MCTP-over-I3C transport header.
 ///
 /// `own_addr` is this target's I3C dynamic address. Unlike the I2C case it is
@@ -144,34 +219,11 @@ impl MctpI3cEncap {
 
     /// Strip the transport header from an inbound private write.
     ///
-    /// When `pec` is set the trailing PEC byte is verified and removed first.
-    /// Returns the inner MCTP packet and the decoded header.
-    ///
-    /// Fails if the PEC is wrong, the header is malformed, or the byte-count
-    /// field disagrees with the actual packet length.
-    pub fn decode<'f>(&self, mut packet: &'f [u8], pec: bool) -> Result<(&'f [u8], MctpI3cHeader)> {
-        if packet.is_empty() {
-            return Err(Error::InvalidInput);
-        }
-
-        if pec {
-            let (packet_pec, rest) = packet.split_last().ok_or(Error::InvalidInput)?;
-            if smbus_pec(rest) != *packet_pec {
-                return Err(Error::InvalidInput);
-            }
-            packet = rest;
-        }
-
-        let header = MctpI3cHeader::decode(packet.get(..MCTP_I3C_HEADER).ok_or(Error::InvalidInput)?)?;
-
-        // byte_count covers everything after the count field except the PEC:
-        // the source byte plus the MCTP packet. Adding back dest, command and
-        // count gives the full framed length.
-        if header.byte_count + 3 != packet.len() {
-            return Err(Error::InvalidInput);
-        }
-
-        Ok((&packet[MCTP_I3C_HEADER..], header))
+    /// A thin wrapper over the free [`decode_frame`]; decoding needs no local
+    /// address, so it does not read `self`. Kept as a method for symmetry with
+    /// [`MctpI3cEncap::encode`].
+    pub fn decode<'f>(&self, packet: &'f [u8], pec: bool) -> Result<(&'f [u8], MctpI3cHeader)> {
+        decode_frame(packet, pec)
     }
 
     /// Frame one MCTP packet for an outbound private write.
@@ -208,7 +260,9 @@ impl MctpI3cEncap {
             .copy_from_slice(payload);
 
         if pec {
-            let body = out.get(..MCTP_I3C_HEADER + payload.len()).ok_or(Error::NoSpace)?;
+            let body = out
+                .get(..MCTP_I3C_HEADER + payload.len())
+                .ok_or(Error::NoSpace)?;
             let crc = smbus_pec(body);
             *out.get_mut(framed - 1).ok_or(Error::NoSpace)? = crc;
         }
