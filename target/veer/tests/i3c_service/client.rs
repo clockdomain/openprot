@@ -3,16 +3,17 @@
 
 //! I3C client process.
 //!
-//! Stands in for the not-yet-written `services/i3c/client-ipc` crate: it drives
-//! the transport protocol from `i3c_api` directly over a pw_kernel channel.
+//! Drives `//services/i3c/client` over `//services/i3c/client-ipc` — the same
+//! typed calls any consumer makes, so this test doubles as the on-target proof
+//! that the client crate works against the real server.
 //!
 //! Walks the full `dispatch()` surface of `//services/i3c/server`, in order:
 //!
-//! 1. `Recv` before any frame has arrived -> `NoData` (the empty latch).
-//! 2. `DynamicAddress` -> the address the Caliptra ROM assigned.
-//! 3. park in `object_wait(CHANNEL, USER)`, then `Recv` -> the host's payload.
-//! 4. a second `Recv` -> `NoData` again, proving `Recv` consumed the latch.
-//! 5. `Send` -> stages a TX the host collects with a private read.
+//! 1. `recv` before any frame has arrived -> `None` (the empty latch).
+//! 2. `dynamic_address` -> the address the Caliptra ROM assigned.
+//! 3. park in `object_wait(CHANNEL, USER)`, then `recv` -> the host's payload.
+//! 4. a second `recv` -> `None` again, proving `recv` consumed the latch.
+//! 5. `send` -> stages a TX the host collects with a private read.
 //!
 //! Step 3 is also the wake this test exists to exercise: the server raises USER
 //! from inside its I3C interrupt handling, so the process made runnable by that
@@ -22,7 +23,9 @@
 #![no_std]
 
 use client_codegen::handle;
-use i3c_api::{decode_response, encode_request, I3cOp, I3cStatus, MAX_FRAME};
+use i3c_api::MAX_PAYLOAD;
+use i3c_client::I3cClient;
+use i3c_client_ipc::IpcTransport;
 use userspace::process_entry;
 use userspace::syscall::{self, Signals};
 use userspace::time::Instant;
@@ -41,50 +44,24 @@ macro_rules! fail {
     }};
 }
 
-/// One request/response round trip over the IPC channel.
-///
-/// Returns the status byte and the response payload length; the payload itself
-/// is left in `resp` so the caller can inspect it without a borrow conflict.
-fn transact(op: I3cOp, payload: &[u8], req: &mut [u8], resp: &mut [u8]) -> (I3cStatus, usize) {
-    let Some(req_len) = encode_request(op, payload, req) else {
-        fail!("encode_request failed");
-    };
-    let Ok(resp_len) =
-        syscall::channel_transact(handle::CHANNEL, &req[..req_len], resp, Instant::MAX)
-    else {
-        fail!("channel_transact failed");
-    };
-    // `decode_response` borrows `resp`; copy out what we need and drop it.
-    let Some((status, body)) = decode_response(&resp[..resp_len]) else {
-        fail!("decode_response failed");
-    };
-    let body_len = body.len();
-    // Move the body to the front so the caller can read it after the borrow ends.
-    let header = resp_len - body_len;
-    resp.copy_within(header..resp_len, 0);
-    (status, body_len)
-}
-
 #[process_entry("client")]
 fn entry() {
-    let mut req = [0u8; MAX_FRAME];
-    let mut resp = [0u8; MAX_FRAME];
+    let mut i3c = I3cClient::new(IpcTransport::new(handle::CHANNEL));
+    let mut buf = [0u8; MAX_PAYLOAD];
 
     // 1. Nothing has arrived on the bus yet: the latch must read empty.
-    let (status, _) = transact(I3cOp::Recv, &[], &mut req, &mut resp);
-    if status != I3cStatus::NoData {
-        fail!("expected NoData from Recv before any frame");
+    match i3c.recv(&mut buf) {
+        Ok(None) => {}
+        Ok(Some(_)) => fail!("expected no frame from recv before any arrived"),
+        Err(_) => fail!("recv failed"),
     }
 
     // 2. The ROM assigns the dynamic address during bus enumeration; the server
     //    reads it back out of the standby-controller registers.
-    let (status, n) = transact(I3cOp::DynamicAddress, &[], &mut req, &mut resp);
-    match status {
-        I3cStatus::Ok if n == 1 => {
-            pw_log::info!("i3c service: dynamic address {:#04x}", resp[0] as u32);
-        }
-        I3cStatus::Unassigned => fail!("dynamic address unassigned"),
-        _ => fail!("unexpected status from DynamicAddress"),
+    match i3c.dynamic_address() {
+        Ok(Some(addr)) => pw_log::info!("i3c service: dynamic address {:#04x}", addr as u32),
+        Ok(None) => fail!("dynamic address unassigned"),
+        Err(_) => fail!("dynamic_address failed"),
     }
 
     pw_log::info!("i3c service: waiting for private write");
@@ -96,34 +73,33 @@ fn entry() {
             fail!("object_wait failed");
         }
 
-        let (status, n) = transact(I3cOp::Recv, &[], &mut req, &mut resp);
-        match status {
+        match i3c.recv(&mut buf) {
             // USER raced ahead of the latch; park again rather than failing.
-            I3cStatus::NoData => continue,
-            I3cStatus::Ok => {
-                if n < EXPECTED.len() || resp.get(..EXPECTED.len()) != Some(EXPECTED) {
+            Ok(None) => continue,
+            Ok(Some(n)) => {
+                if n < EXPECTED.len() || buf.get(..EXPECTED.len()) != Some(EXPECTED) {
                     pw_log::error!("i3c service: payload mismatch len={}", n as u32);
                     let _ = syscall::debug_shutdown(Err(pw_status::Error::DataLoss));
                     loop {}
                 }
                 break;
             }
-            _ => fail!("unexpected status from Recv"),
+            Err(_) => fail!("recv failed"),
         }
     }
     pw_log::info!("i3c service: received expected payload");
 
-    // 4. `Recv` consumes the latch, so an immediate second read must be empty.
-    let (status, _) = transact(I3cOp::Recv, &[], &mut req, &mut resp);
-    if status != I3cStatus::NoData {
-        fail!("expected NoData from second Recv: latch was not consumed");
+    // 4. `recv` consumes the latch, so an immediate second read must be empty.
+    match i3c.recv(&mut buf) {
+        Ok(None) => {}
+        Ok(Some(_)) => fail!("expected no frame from second recv: latch was not consumed"),
+        Err(_) => fail!("recv failed"),
     }
 
     // 5. Stage a transmit. The host collects it with a private read, which is
     //    what proves the Send path reached the hardware.
-    let (status, _) = transact(I3cOp::Send, REPLY, &mut req, &mut resp);
-    if status != I3cStatus::Ok {
-        fail!("Send failed");
+    if i3c.send(REPLY).is_err() {
+        fail!("send failed");
     }
     pw_log::info!("i3c service: staged reply for private read");
 

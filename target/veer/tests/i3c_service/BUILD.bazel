@@ -51,7 +51,7 @@ rust_binary(
 )
 
 # On-target test for //services/i3c/server-runtime: the server process runs the
-# real reactor; the client process stands in for the absent client-ipc crate.
+# real reactor; the client process drives //services/i3c/client over client-ipc.
 multi_process_app(
     name = "i3c_service",
     processes = [
@@ -83,6 +83,8 @@ rust_process(
     tags = ["kernel"],
     deps = [
         "//services/i3c/api:i3c_api",
+        "//services/i3c/client:i3c_client",
+        "//services/i3c/client-ipc:i3c_client_ipc",
         "@pigweed//pw_kernel/userspace",
         "@pigweed//pw_log/rust:pw_log",
         "@pigweed//pw_status/rust:pw_status",
