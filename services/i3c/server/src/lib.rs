@@ -10,6 +10,10 @@
 
 #![no_std]
 
+pub mod loopback;
+
+pub use loopback::LoopbackTransport;
+
 use i3c_api::{decode_request, encode_response, I3cOp, I3cStatus, HEADER, MAX_PAYLOAD};
 use openprot_hal_blocking::i3c_hardware::I3cTarget;
 
@@ -200,7 +204,10 @@ mod tests {
         let mut resp = [0u8; MAX_FRAME];
         let n = encode_request(I3cOp::Recv, &[], &mut req).unwrap();
         let rn = dispatch(&mut s, &req[..n], &mut resp);
-        assert_eq!(decode_response(&resp[..rn]), Some((I3cStatus::NoData, &[][..])));
+        assert_eq!(
+            decode_response(&resp[..rn]),
+            Some((I3cStatus::NoData, &[][..]))
+        );
     }
 
     #[test]
@@ -218,11 +225,17 @@ mod tests {
         let n = encode_request(I3cOp::Recv, &[], &mut req).unwrap();
 
         let rn = dispatch(&mut s, &req[..n], &mut resp);
-        assert_eq!(decode_response(&resp[..rn]), Some((I3cStatus::Ok, &b"ping"[..])));
+        assert_eq!(
+            decode_response(&resp[..rn]),
+            Some((I3cStatus::Ok, &b"ping"[..]))
+        );
         assert!(!s.has_frame());
 
         let rn = dispatch(&mut s, &req[..n], &mut resp);
-        assert_eq!(decode_response(&resp[..rn]), Some((I3cStatus::NoData, &[][..])));
+        assert_eq!(
+            decode_response(&resp[..rn]),
+            Some((I3cStatus::NoData, &[][..]))
+        );
     }
 
     #[test]
@@ -233,11 +246,17 @@ mod tests {
         let n = encode_request(I3cOp::DynamicAddress, &[], &mut req).unwrap();
 
         let rn = dispatch(&mut s, &req[..n], &mut resp);
-        assert_eq!(decode_response(&resp[..rn]), Some((I3cStatus::Unassigned, &[][..])));
+        assert_eq!(
+            decode_response(&resp[..rn]),
+            Some((I3cStatus::Unassigned, &[][..]))
+        );
 
         s.target.addr = Some(0x42);
         let rn = dispatch(&mut s, &req[..n], &mut resp);
-        assert_eq!(decode_response(&resp[..rn]), Some((I3cStatus::Ok, &[0x42][..])));
+        assert_eq!(
+            decode_response(&resp[..rn]),
+            Some((I3cStatus::Ok, &[0x42][..]))
+        );
     }
 
     #[test]
@@ -245,7 +264,10 @@ mod tests {
         let mut s = srv();
         let mut resp = [0u8; MAX_FRAME];
         let rn = dispatch(&mut s, &[0xFF], &mut resp);
-        assert_eq!(decode_response(&resp[..rn]), Some((I3cStatus::InvalidOp, &[][..])));
+        assert_eq!(
+            decode_response(&resp[..rn]),
+            Some((I3cStatus::InvalidOp, &[][..]))
+        );
     }
 
     // Test-only helper mirroring what the runtime reads from `on_interrupt`.

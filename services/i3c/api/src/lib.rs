@@ -20,6 +20,10 @@
 
 #![no_std]
 
+mod transport;
+
+pub use transport::{Transport, TransportError};
+
 /// Largest message payload carried in one request or response, matching the
 /// caliptra i3c-core private read/write limit.
 pub const MAX_PAYLOAD: usize = 250;
@@ -167,10 +171,16 @@ mod tests {
     fn response_encode_decode() {
         let mut buf = [0u8; MAX_FRAME];
         let n = encode_response(I3cStatus::Ok, b"pong", &mut buf).unwrap();
-        assert_eq!(decode_response(&buf[..n]), Some((I3cStatus::Ok, &b"pong"[..])));
+        assert_eq!(
+            decode_response(&buf[..n]),
+            Some((I3cStatus::Ok, &b"pong"[..]))
+        );
 
         let n = encode_response(I3cStatus::NoData, &[], &mut buf).unwrap();
-        assert_eq!(decode_response(&buf[..n]), Some((I3cStatus::NoData, &[][..])));
+        assert_eq!(
+            decode_response(&buf[..n]),
+            Some((I3cStatus::NoData, &[][..]))
+        );
     }
 
     #[test]

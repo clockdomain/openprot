@@ -7,7 +7,7 @@ package(default_visibility = ["//visibility:public"])
 
 rust_library(
     name = "i3c_api",
-    srcs = ["src/lib.rs"],
+    srcs = glob(["src/**/*.rs"]),
     edition = "2024",
 )
 
