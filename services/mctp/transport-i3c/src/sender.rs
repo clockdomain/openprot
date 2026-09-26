@@ -84,14 +84,11 @@ impl<T: Transport> mctp_lib::Sender for I3cSender<T> {
         let addr = self.remote_addr;
         let pec = self.pec;
 
-        // TODO(follow-up): this stages every fragment back-to-back with no
-        // back-pressure. `I3cTarget::send` queues a TX descriptor and raises an
-        // IBI for the controller's next private read; a multi-fragment message
-        // pushes all of them before the controller has read any, which on real
-        // hardware can overrun the target TX FIFO. There is no queue-depth
-        // signal in the client -> dispatch -> backend path yet. Current traffic
-        // is single-fragment, so this is deferred rather than fixed here; see
-        // the MCTP-over-I3C code review.
+        // Fragments are staged one at a time with back-pressure: `client.send`
+        // is a blocking round-trip, and the i3c server holds a second `Send`
+        // until the controller has read the first (signalled by
+        // TargetEvent::ResponseRead). So this loop cannot outrun the controller
+        // and overrun the target TX queue — the wait is in the server, not here.
         loop {
             let mut pkt = [0u8; MCTP_I3C_IPC_PACKET];
             match fragmenter.fragment_vectored(payload, &mut pkt) {

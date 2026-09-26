@@ -17,12 +17,24 @@ pub use loopback::LoopbackTransport;
 use i3c_api::{decode_request, encode_response, I3cOp, I3cStatus, HEADER, MAX_PAYLOAD};
 use openprot_hal_blocking::i3c_hardware::I3cTarget;
 
-/// The I3C target the server owns, plus its IPC channel, IRQ handle, and the
-/// single-frame inbound latch.
+/// The I3C target the server owns, plus its IPC channel, IRQ handle, the
+/// single-frame inbound latch, and the outbound "response staged, awaiting
+/// read" flag.
 ///
 /// One frame is latched at a time: MCTP over I3C is request/response, so the
 /// client `Recv`s before the next inbound frame. A frame arriving while one is
 /// still latched overwrites it — the bus is never blocked.
+///
+/// Outbound has back-pressure. A `Send` stages a response for the controller's
+/// next private read and sets [`tx_pending`](Server::tx_pending); the flag
+/// clears only when the controller has read it, signalled by
+/// [`notify_response_read`](Server::notify_response_read) on a
+/// [`TargetEvent::ResponseRead`]. The runtime uses the flag to hold a second
+/// `Send` until the first has been read, so fragments are not staged faster
+/// than the controller drains them. `dispatch` itself always stages (the
+/// gating is the runtime's), so the in-process loopback path is unaffected.
+///
+/// [`TargetEvent::ResponseRead`]: openprot_hal_blocking::i3c_hardware::TargetEvent::ResponseRead
 pub struct Server<T> {
     /// IPC channel handle carrying the transport protocol.
     pub channel: u32,
@@ -33,6 +45,7 @@ pub struct Server<T> {
     rx: [u8; MAX_PAYLOAD],
     rx_len: usize,
     rx_ready: bool,
+    tx_pending: bool,
 }
 
 impl<T> Server<T> {
@@ -45,12 +58,27 @@ impl<T> Server<T> {
             rx: [0u8; MAX_PAYLOAD],
             rx_len: 0,
             rx_ready: false,
+            tx_pending: false,
         }
     }
 
     /// Whether an inbound frame is latched and waiting for a `Recv`.
     pub fn has_frame(&self) -> bool {
         self.rx_ready
+    }
+
+    /// Whether a staged transmit is still awaiting the controller's private
+    /// read. The runtime holds a further `Send` while this is set.
+    pub fn tx_pending(&self) -> bool {
+        self.tx_pending
+    }
+
+    /// Clear the outbound back-pressure flag: the controller has read the staged
+    /// response. Called by the runtime on [`TargetEvent::ResponseRead`].
+    ///
+    /// [`TargetEvent::ResponseRead`]: openprot_hal_blocking::i3c_hardware::TargetEvent::ResponseRead
+    pub fn notify_response_read(&mut self) {
+        self.tx_pending = false;
     }
 }
 
@@ -99,7 +127,13 @@ pub fn dispatch<T: I3cTarget>(srv: &mut Server<T>, req: &[u8], resp: &mut [u8]) 
                 return status_only(resp, I3cStatus::TooLong);
             }
             match srv.target.send(payload) {
-                Ok(()) => status_only(resp, I3cStatus::Ok),
+                Ok(()) => {
+                    // Staged for the controller's next private read; hold further
+                    // sends until it has been read (cleared by the runtime on
+                    // ResponseRead).
+                    srv.tx_pending = true;
+                    status_only(resp, I3cStatus::Ok)
+                }
                 Err(_) => status_only(resp, I3cStatus::Internal),
             }
         }
@@ -195,6 +229,23 @@ mod tests {
         let rn = dispatch(&mut s, &req[..n], &mut resp);
         assert_eq!(decode_response(&resp[..rn]), Some((I3cStatus::Ok, &[][..])));
         assert_eq!(&s.target.sent[..s.target.sent_len], b"pong");
+    }
+
+    #[test]
+    fn send_sets_tx_pending_until_response_read() {
+        let mut s = srv();
+        let mut req = [0u8; MAX_FRAME];
+        let mut resp = [0u8; MAX_FRAME];
+        assert!(!s.tx_pending(), "nothing staged yet");
+
+        let n = encode_request(I3cOp::Send, b"pong", &mut req).unwrap();
+        let rn = dispatch(&mut s, &req[..n], &mut resp);
+        assert_eq!(decode_response(&resp[..rn]), Some((I3cStatus::Ok, &[][..])));
+        assert!(s.tx_pending(), "a staged response is awaiting the read");
+
+        // The controller reads it; the runtime clears the flag.
+        s.notify_response_read();
+        assert!(!s.tx_pending(), "back-pressure released after the read");
     }
 
     #[test]
