@@ -87,6 +87,7 @@ rust_process(
         "//services/i3c/client-ipc:i3c_client_ipc",
         "//services/mctp/api:mctp_api",
         "//services/mctp/server:mctp_server_lib",
+        "//services/mctp/server-runtime:mctp_server_runtime",
         "//services/mctp/transport-i3c:mctp_transport_i3c",
         "@pigweed//pw_kernel/userspace",
         "@pigweed//pw_log/rust:pw_log",

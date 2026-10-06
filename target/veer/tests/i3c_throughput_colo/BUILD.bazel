@@ -73,6 +73,7 @@ rust_process(
         "//services/i3c/server:i3c_server",
         "//services/mctp/api:mctp_api",
         "//services/mctp/server:mctp_server_lib",
+        "//services/mctp/server-runtime:mctp_server_runtime",
         "//services/mctp/transport-i3c:mctp_transport_i3c",
         "//target/veer/peripherals/i3c",
         "@pigweed//pw_kernel/userspace",

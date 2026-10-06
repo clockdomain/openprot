@@ -29,17 +29,12 @@ use i3c_api::{Transport, TransportError};
 use i3c_client::I3cClient;
 use i3c_server::{dispatch, Inbound, Server};
 use mctp_i3c_colo_codegen::{handle, signals};
+use mctp_server_runtime::Channel;
 use openprot_hal_blocking::i3c_hardware::{I3cTarget, TargetEvent};
-use openprot_mctp_api::wire::{
-    self, MctpOp, MctpRequestHeader, MAX_PAYLOAD_SIZE, MAX_REQUEST_SIZE, MAX_RESPONSE_SIZE,
-};
-use openprot_mctp_api::{Handle, ResponseCode};
-use openprot_mctp_server::dispatch::{self as mctp_dispatch, DispatchOutcome};
 use openprot_mctp_transport_i3c::{I3cSender, MctpI3cReceiver};
 use pw_status::Result;
 use userspace::process_entry;
-use userspace::syscall::{self, Signals};
-use userspace::time::{Clock, Duration, Instant, SystemClock};
+use userspace::syscall;
 
 const OWN_EID: u8 = 8;
 const REMOTE_I3C_ADDR: u8 = 0x0a;
@@ -53,7 +48,11 @@ struct ColoTransport<'a> {
 }
 
 impl Transport for ColoTransport<'_> {
-    fn transact(&mut self, req: &[u8], resp: &mut [u8]) -> core::result::Result<usize, TransportError> {
+    fn transact(
+        &mut self,
+        req: &[u8],
+        resp: &mut [u8],
+    ) -> core::result::Result<usize, TransportError> {
         let mut srv = self.srv.borrow_mut();
         Ok(dispatch(&mut srv, req, resp))
     }
@@ -78,51 +77,20 @@ fn colo_loop() -> Result<()> {
     let i3c_receiver = MctpI3cReceiver::new(PEC);
 
     let mut server = openprot_mctp_server::Server::<_, 16>::new(mctp::Eid(OWN_EID), 0, sender);
-
-    let mut request_buf = [0u8; MAX_REQUEST_SIZE];
-    let mut response_buf = [0u8; MAX_RESPONSE_SIZE];
-    let mut recv_buf = [0u8; MAX_PAYLOAD_SIZE];
     let mut i3c_rx_buf = [0u8; I3C_RX_MAX];
+    let mut channels = [Channel::new(handle::MCTP)];
 
-    struct PendingRecv {
-        handle: Handle,
-        deadline: Instant,
-    }
-    let mut pending_recv: Option<PendingRecv> = None;
-
-    // user_data=0 -> IPC from an MCTP client; user_data=1 -> the i3c IRQ.
-    syscall::wait_group_add(handle::WG, handle::MCTP, Signals::READABLE, 0usize)?;
-    syscall::wait_group_add(handle::WG, handle::I3C_IRQ, signals::I3C, 1usize)?;
-
-    let wait_mask = Signals::READABLE | signals::I3C;
-
-    loop {
-        let wait_deadline = pending_recv
-            .as_ref()
-            .map(|pending| pending.deadline)
-            .unwrap_or(Instant::MAX);
-        let ev = match syscall::object_wait(handle::WG, wait_mask, wait_deadline) {
-            Ok(ev) => ev,
-            Err(pw_status::Error::DeadlineExceeded) => {
-                if pending_recv.take().is_some() {
-                    let resp = wire::MctpResponseHeader::error(ResponseCode::TimedOut);
-                    response_buf[..wire::MctpResponseHeader::SIZE]
-                        .copy_from_slice(&resp.to_bytes());
-                    let _ = syscall::channel_respond(
-                        handle::MCTP,
-                        &response_buf[..wire::MctpResponseHeader::SIZE],
-                    );
-                    let _ =
-                        syscall::wait_group_add(handle::WG, handle::MCTP, Signals::READABLE, 0usize);
-                }
-                continue;
-            }
-            Err(err) => return Err(err),
-        };
-
-        if ev.user_data == 1 {
+    // The MCTP side of the loop is the shared runtime. Its transport wake
+    // source here is the i3c IRQ itself, so the callback does the i3c
+    // server's interrupt work in-process before feeding the router.
+    mctp_server_runtime::run(
+        handle::WG,
+        &mut channels,
+        handle::I3C_IRQ,
+        signals::I3C,
+        &mut server,
+        |server| {
             // ---- i3c IRQ: drain inbound frames into the ring (in-process) ----
-            let acked = ev.pending_signals & signals::I3C;
             // Read the event first (releasing the RefCell borrow) so the latch
             // loop below can borrow the Server again without a double-borrow.
             let evt = srv.borrow_mut().target.on_interrupt();
@@ -144,135 +112,20 @@ fn colo_loop() -> Result<()> {
                 Ok(TargetEvent::ResponseRead) => srv.borrow_mut().notify_response_read(),
                 _ => {}
             }
-            let _ = syscall::interrupt_ack(handle::I3C_IRQ, acked);
+            // Acking is what quiets this wake source for the runtime.
+            let _ = syscall::interrupt_ack(handle::I3C_IRQ, signals::I3C);
 
             // Drain every latched frame into the MCTP router (direct dispatch).
-            loop {
-                match i3c_rx_client.recv(&mut i3c_rx_buf) {
-                    Ok(Some(n)) => {
-                        if let Ok((pkt, _)) = i3c_receiver.decode(&i3c_rx_buf[..n]) {
-                            let _ = server.inbound(pkt);
-                        } else {
-                            pw_log::error!("i3c frame decode failed");
-                        }
-                    }
-                    _ => break,
+            while let Ok(Some(n)) = i3c_rx_client.recv(&mut i3c_rx_buf) {
+                let decoded = i3c_rx_buf.get(..n).map(|frame| i3c_receiver.decode(frame));
+                if let Some(Ok((pkt, _))) = decoded {
+                    let _ = server.inbound(pkt);
+                } else {
+                    pw_log::error!("i3c frame decode failed");
                 }
             }
-
-            // Satisfy a deferred blocking-recv now that inbound data arrived.
-            if let Some(pending) = pending_recv.as_ref() {
-                if let Some(meta) = server.try_recv(pending.handle, &mut recv_buf) {
-                    let payload = &recv_buf[..meta.payload_size];
-                    let response_len = wire::encode_recv_response(
-                        &mut response_buf,
-                        meta.msg_type,
-                        meta.msg_ic,
-                        meta.remote_eid,
-                        meta.msg_tag,
-                        payload,
-                    )
-                    .unwrap_or_else(|_| {
-                        wire::encode_error_response(&mut response_buf, ResponseCode::InternalError)
-                            .unwrap_or(0)
-                    });
-                    syscall::channel_respond(handle::MCTP, &response_buf[..response_len])?;
-                    pending_recv = None;
-                    syscall::wait_group_add(handle::WG, handle::MCTP, Signals::READABLE, 0usize)?;
-                }
-            }
-        } else {
-            // ---- MCTP app request (unchanged from the two-process server) ----
-            let len = syscall::channel_read(handle::MCTP, 0, &mut request_buf)?;
-            if pending_recv.is_some() {
-                let resp = wire::MctpResponseHeader::error(ResponseCode::InternalError);
-                response_buf[..wire::MctpResponseHeader::SIZE].copy_from_slice(&resp.to_bytes());
-                syscall::channel_respond(
-                    handle::MCTP,
-                    &response_buf[..wire::MctpResponseHeader::SIZE],
-                )?;
-                continue;
-            }
-
-            if len < MctpRequestHeader::SIZE {
-                let resp = wire::MctpResponseHeader::error(ResponseCode::BadArgument);
-                response_buf[..wire::MctpResponseHeader::SIZE].copy_from_slice(&resp.to_bytes());
-                syscall::channel_respond(
-                    handle::MCTP,
-                    &response_buf[..wire::MctpResponseHeader::SIZE],
-                )?;
-                continue;
-            }
-
-            if MctpRequestHeader::from_bytes(&request_buf[..len])
-                .and_then(|h| h.operation())
-                .is_some_and(|op| matches!(op, MctpOp::Recv))
-            {
-                let header = MctpRequestHeader::from_bytes(&request_buf[..len]).unwrap();
-                let recv_handle = Handle(header.handle);
-                let payload = wire::get_request_payload(&request_buf[..len]);
-                if payload.len() < 4 {
-                    let resp = wire::MctpResponseHeader::error(ResponseCode::BadArgument);
-                    response_buf[..wire::MctpResponseHeader::SIZE]
-                        .copy_from_slice(&resp.to_bytes());
-                    syscall::channel_respond(
-                        handle::MCTP,
-                        &response_buf[..wire::MctpResponseHeader::SIZE],
-                    )?;
-                    continue;
-                }
-
-                let timeout_millis = u32::from_le_bytes(payload[..4].try_into().unwrap());
-                match server.try_recv(recv_handle, &mut recv_buf) {
-                    Some(meta) => {
-                        let payload = &recv_buf[..meta.payload_size];
-                        let response_len = wire::encode_recv_response(
-                            &mut response_buf,
-                            meta.msg_type,
-                            meta.msg_ic,
-                            meta.remote_eid,
-                            meta.msg_tag,
-                            payload,
-                        )
-                        .unwrap_or_else(|_| {
-                            wire::encode_error_response(
-                                &mut response_buf,
-                                ResponseCode::InternalError,
-                            )
-                            .unwrap_or(0)
-                        });
-                        syscall::channel_respond(handle::MCTP, &response_buf[..response_len])?;
-                    }
-                    None => {
-                        let deadline = if timeout_millis == 0 {
-                            Instant::MAX
-                        } else {
-                            SystemClock::now()
-                                .checked_add_duration(Duration::from_millis(timeout_millis as u64))
-                                .unwrap_or(Instant::MAX)
-                        };
-                        pending_recv = Some(PendingRecv {
-                            handle: recv_handle,
-                            deadline,
-                        });
-                        let _ = syscall::wait_group_remove(handle::WG, handle::MCTP);
-                    }
-                }
-            } else {
-                let response_len = match mctp_dispatch::dispatch_mctp_op(
-                    &request_buf[..len],
-                    &mut response_buf,
-                    &mut server,
-                    &mut recv_buf,
-                    0,
-                ) {
-                    DispatchOutcome::Reply(n) => n,
-                    DispatchOutcome::Pending { .. } => unreachable!("Recv handled above"),
-                };
-                syscall::channel_respond(handle::MCTP, &response_buf[..response_len])?;
-            }
-        }
-    }
+        },
+    )
 }
 
 #[process_entry("mctp_i3c_colo")]
