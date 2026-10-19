@@ -1,0 +1,18 @@
+# Licensed under the Apache-2.0 license
+# SPDX-License-Identifier: Apache-2.0
+#
+# Crates specific to this board go here; they resolve into the
+# `@example_crates` hub declared in MODULE.bazel. Crates shared with openprot
+# come from its `@rust_crates` hub instead, so both sides link the same
+# instance of each crate.
+
+[package]
+name = "example_crates"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+
+[lib]
+path = "fake.rs"
+
+[dependencies]

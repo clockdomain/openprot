@@ -1,0 +1,18 @@
+// Licensed under the Apache-2.0 license
+// SPDX-License-Identifier: Apache-2.0
+
+// Kernel-only image for the example board. Same AST1060 layout as
+// @openprot//target/ast10x0/erot; a real board adds its `apps` here.
+{
+    arch: {
+        type: "armv7m",
+        vector_table_start_address: 0x00000000,
+        vector_table_size_bytes: 1280,
+    },
+    kernel: {
+        flash_start_address: 0x00000500,
+        flash_size_bytes: 262144,
+        ram_start_address: 0x00040500,
+        ram_size_bytes: 391936, // ends at RAM_NC boundary (0x000A0000)
+    },
+}

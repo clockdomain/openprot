@@ -1,2 +1,15 @@
 # Licensed under the Apache-2.0 license
 # SPDX-License-Identifier: Apache-2.0
+
+package(default_visibility = ["//visibility:public"])
+
+# Which SoC a platform is built for. Each reference SoC under `target/<soc>/`
+# declares one value with `openprot_soc()` and gates its SoC support crates
+# (entry, console, kernel config, peripherals, backends) on that value, not on
+# the pw_kernel *target* constraint. That split is what lets a board that
+# lives outside this repository reuse an in-tree SoC: the board's `platform()`
+# carries its own `@pigweed//pw_kernel/target:target` value plus the in-tree
+# SoC value, e.g. `@openprot//target/ast10x0:soc_ast10x0`.
+#
+# See `//target:defs.bzl` and docs/src/out-of-tree-targets.md.
+constraint_setting(name = "soc")

@@ -69,6 +69,30 @@ jobs:
       # See workflows.json for the `default` definition.
       run: ./pw default
 
+  downstream:
+    name: Out-of-tree Target Example
+    needs: presubmit
+    runs-on: openprot-ci-runner
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Setup Bazel
+      uses: bazel-contrib/setup-bazel@0.19.0
+      with:
+        bazelisk-cache: false
+        disk-cache: false
+        repository-cache: false
+
+    - name: Check the example's pins match MODULE.bazel
+      run: python3 presubmit/check_downstream_module.py
+
+    - name: Build the example as a standalone consumer of openprot
+      # examples/out_of_tree_target is its own Bazel module that depends on
+      # openprot. Building it from its own directory is what proves a target
+      # can live outside this repository. See docs/src/out-of-tree-targets.md.
+      working-directory: examples/out_of_tree_target
+      run: bazelisk build --config=qemu //...
+
   security-audit:
     name: Security Audit
     needs: presubmit

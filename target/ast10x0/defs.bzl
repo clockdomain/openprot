@@ -3,11 +3,12 @@
 """Common definitions used by all ast10x0 targets."""
 
 load("@pigweed//pw_kernel/tooling:system_image.bzl", "SystemImageInfo")
+load("//target:defs.bzl", "soc_compatible_with")
 
-TARGET_COMPATIBLE_WITH = select({
-    "//target/ast10x0:target_ast10x0": [],
-    "//conditions:default": ["@platforms//:incompatible"],
-})
+# Compatible with every platform built on the AST10x0 SoC: the in-tree
+# `//target/ast10x0` reference platform and any out-of-tree board that lists
+# `@openprot//target/ast10x0:soc_ast10x0` in its constraint values.
+TARGET_COMPATIBLE_WITH = soc_compatible_with(str(Label("//target/ast10x0:soc_ast10x0")))
 
 def _system_image_test_impl(ctx):
     image_info = ctx.attr.image[SystemImageInfo]

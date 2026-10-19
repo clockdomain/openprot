@@ -565,7 +565,7 @@
   "moduleExtensions": {
     "//third_party/caliptra:extensions.bzl%caliptra_repos": {
       "general": {
-        "bzlTransitiveDigest": "8cEFLBZLSpLCUIwJNo9rxhRQdKOh+hDpG+Qoj+4YU+k=",
+        "bzlTransitiveDigest": "YIq2qbk+Y/4cXYPE60cf5Kd1Bvkku5zSn5haWn8tX1M=",
         "usagesDigest": "ODX7jX2XQ5ywJ6htOZNVOezD0lY5SqvrMRMaa38fSMQ=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},

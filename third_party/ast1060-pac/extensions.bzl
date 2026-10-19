@@ -8,7 +8,7 @@ load("//third_party/ast1060-pac:versions.bzl", "AST1060_PAC_VERSIONS")
 def _ast1060_pac_repos_impl(module_ctx):
     git_repository(
         name = "ast1060_pac",
-        build_file = "//third_party/ast1060-pac:overlay.BUILD",
+        build_file = Label("//third_party/ast1060-pac:overlay.BUILD"),
         commit = AST1060_PAC_VERSIONS["ast1060_pac"],
         remote = "https://github.com/OpenPRoT/ast1060-pac",
     )

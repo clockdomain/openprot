@@ -21,7 +21,10 @@ You can run tasks using the Pigweed workflow launcher `pw` or `bazel`.
 
 ### Development
 
-The project is structured as a bazel module.
+The project is structured as a bazel module. The targets under `target/` are
+reference targets; a new board or SoC lives in its own module that depends on
+openprot. See `docs/src/out-of-tree-targets.md` and the standalone example in
+`examples/out_of_tree_target/`.
 
 ## Requirements
 

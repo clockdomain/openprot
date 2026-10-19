@@ -95,7 +95,7 @@ def caliptra_rom_package(name, rom_elf, out = None, packager = None, **kwargs):
     if out == None:
         out = "cptra-rom.bin"
     if packager == None:
-        packager = "//third_party/caliptra/caliptra-sw:caliptra_rom_packager"
+        packager = str(Label("//third_party/caliptra/caliptra-sw:caliptra_rom_packager"))
 
     native.genrule(
         name = name,
@@ -132,7 +132,7 @@ def caliptra_firmware_bundle(name, fmc, runtime, out = None, bundler = None, **k
     if out == None:
         out = "cptra-firmware.bin"
     if bundler == None:
-        bundler = "//third_party/caliptra/caliptra-sw:caliptra_firmware_bundler"
+        bundler = str(Label("//third_party/caliptra/caliptra-sw:caliptra_firmware_bundler"))
 
     native.genrule(
         name = name,
@@ -240,7 +240,7 @@ def caliptra_firmware_binary(
         crate_root = crate_root,
         edition = "2021",
         crate_features = crate_features,
-        target_compatible_with = ["//third_party/caliptra/platforms:target_caliptra"],
+        target_compatible_with = [str(Label("//third_party/caliptra/platforms:target_caliptra"))],
         compile_data = list(linker_scripts_list) + compile_data,
         deps = deps,
         proc_macro_deps = proc_macro_deps,

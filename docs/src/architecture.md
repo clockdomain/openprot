@@ -132,9 +132,18 @@ test/runner tooling.
 - `target/veer/` — Caliptra VeeR-EL2. Built on `pw_kernel` and exercised
   on the Caliptra emulator via `target/veer/tooling/caliptra_runner.bzl`.
 
-When adding a new target, prefer the `target/<name>/defs.bzl` helpers over
-hand-rolled `rust_binary` rules, and always set `target_compatible_with =
-TARGET_COMPATIBLE_WITH` so wildcard host builds skip target-only crates.
+These are reference targets. Each directory is SoC support (gated on the
+`//target:soc` constraint value it declares with `openprot_soc()`) plus one
+reference board platform declared with `openprot_target()` from
+`target/defs.bzl`. A new board or SoC lives in its own Bazel module that
+depends on openprot; see [Out-of-tree Targets](./out-of-tree-targets.md) and
+`examples/out_of_tree_target/`, which CI builds standalone.
+
+Within a target directory, always set `target_compatible_with =
+TARGET_COMPATIBLE_WITH` from that target's `defs.bzl` so wildcard host builds
+skip SoC-only crates. Shared drivers and services use
+`PW_KERNEL_TARGET_COMPATIBLE_WITH` from `target/defs.bzl` instead, so they
+build for every pw_kernel target, including ones outside this repository.
 
 ## Firmware images and tests
 

@@ -23,6 +23,8 @@ jobs:
           python presubmit/roller.py \
               --remote pigweed=https://github.com/pigweed-project/pigweed.git \
               MODULE.bazel
+          # The out-of-tree example module repeats the pigweed pin.
+          python presubmit/check_downstream_module.py --fix
 
       - name: Generate GitHub App Token
         id: generate-token

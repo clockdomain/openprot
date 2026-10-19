@@ -1,0 +1,78 @@
+# Licensed under the Apache-2.0 license
+# SPDX-License-Identifier: Apache-2.0
+#
+# An example board on the AST10x0 SoC, defined entirely outside openprot.
+
+load("@openprot//target:defs.bzl", "openprot_target")
+load("@openprot//target/ast10x0:defs.bzl", "TARGET_COMPATIBLE_WITH")
+load("@pigweed//pw_kernel/tooling:system_image.bzl", "system_image", "system_image_test")
+load("@pigweed//pw_kernel/tooling:target_linker_script.bzl", "target_linker_script")
+load("@rules_rust//rust:defs.bzl", "rust_binary")
+
+# The board's pw_kernel target. Declares `:target_example_board` and the
+# `:example_board` platform. Listing openprot's SoC constraint value makes
+# every `@openprot//target/ast10x0/...` crate compatible with this platform.
+openprot_target(
+    name = "example_board",
+    constraint_values = [
+        "@pigweed//pw_build/constraints/arm:cortex-m4",
+        "@platforms//cpu:armv7e-m",
+    ],
+    flags = {
+        # A board with different clocks or stack needs substitutes its own
+        # `kernel_config` crate here.
+        "@pigweed//pw_kernel/config:kernel_config": "@openprot//target/ast10x0:config",
+        "@pigweed//pw_kernel/subsys/console:console_backend": "@openprot//target/ast10x0:console",
+    },
+    soc = "@openprot//target/ast10x0:soc_ast10x0",
+)
+
+filegroup(
+    name = "system_config",
+    srcs = ["system.json5"],
+)
+
+target_linker_script(
+    name = "linker_script",
+    system_config = ":system_config",
+    tags = ["kernel"],
+    target_compatible_with = TARGET_COMPATIBLE_WITH,
+    template = "@openprot//target/ast10x0:linker_script_template",
+)
+
+rust_binary(
+    name = "target",
+    srcs = ["target.rs"],
+    edition = "2024",
+    tags = ["kernel"],
+    target_compatible_with = TARGET_COMPATIBLE_WITH,
+    deps = [
+        ":linker_script",
+        "@openprot//target/ast10x0:entry",
+        "@pigweed//pw_kernel/arch/arm_cortex_m:arch_arm_cortex_m",
+        "@pigweed//pw_kernel/kernel",
+        "@pigweed//pw_kernel/subsys/console:console_backend",
+        "@pigweed//pw_kernel/target:target_common",
+        "@pigweed//pw_log/rust:pw_log",
+    ],
+)
+
+# `bazel build //:example_board_image` emits the ELF and the raw .bin laid out
+# as system.json5 declares.
+system_image(
+    name = "example_board_image",
+    kernel = ":target",
+    platform = ":example_board",
+    system_config = ":system_config",
+    tags = ["kernel"],
+    target_compatible_with = TARGET_COMPATIBLE_WITH,
+    userspace = False,
+)
+
+# `bazel test --config=qemu //:example_board_test` boots the image under QEMU
+# and waits for the TEST_RESULT sentinel on the UART.
+system_image_test(
+    name = "example_board_test",
+    image = ":example_board_image",
+    target_compatible_with = TARGET_COMPATIBLE_WITH,
+)

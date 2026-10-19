@@ -20,16 +20,18 @@ load("//third_party/caliptra:versions.bzl", "CALIPTRA_VERSIONS")
 def _caliptra_repos_impl(module_ctx):
     git_repository(
         name = "caliptra_mcu_sw",
-        build_file = "//third_party/caliptra/caliptra-mcu-sw:overlay.BUILD",
+        # Label() anchors these to openprot so they resolve when openprot is a
+        # dependency of another module rather than the root.
+        build_file = Label("//third_party/caliptra/caliptra-mcu-sw:overlay.BUILD"),
         commit = CALIPTRA_VERSIONS["caliptra_mcu_sw"],
         remote = "https://github.com/chipsalliance/caliptra-mcu-sw",
     )
     git_repository(
         name = "caliptra_sw",
-        build_file = "//third_party/caliptra/caliptra-sw:overlay.BUILD",
+        build_file = Label("//third_party/caliptra/caliptra-sw:overlay.BUILD"),
         commit = CALIPTRA_VERSIONS["caliptra_sw"],
         remote = "https://github.com/chipsalliance/caliptra-sw",
-        patches = ["//third_party/caliptra/caliptra-sw:caliptra_sw_rustcrypto.patch"],
+        patches = [Label("//third_party/caliptra/caliptra-sw:caliptra_sw_rustcrypto.patch")],
         patch_args = ["-p0"],
     )
 

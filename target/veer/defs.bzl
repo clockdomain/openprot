@@ -4,10 +4,10 @@
 """Common definitions used by all veer targets.
 """
 
-TARGET_COMPATIBLE_WITH = select({
-    "//target/veer:target_veer": [],
-    "//conditions:default": ["@platforms//:incompatible"],
-})
+load("//target:defs.bzl", "soc_compatible_with")
+
+# Compatible with every platform built on the VeeR SoC, in-tree or not.
+TARGET_COMPATIBLE_WITH = soc_compatible_with(str(Label("//target/veer:soc_veer")))
 
 def veer_system_config(name, src, **kwargs):
     """Renders a pw_kernel system config for the selected target type.

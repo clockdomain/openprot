@@ -16,7 +16,7 @@ from pw_presubmit import (
     json_check,
     keep_sorted,
 )
-from presubmit import cpp_include_guard, license
+from presubmit import check_downstream_module, cpp_include_guard, license
 from pw_presubmit.install_hook import install_git_hook
 from pw_presubmit.presubmit import Programs
 
@@ -29,6 +29,7 @@ EXCLUDES = tuple(re.compile(path) for path in _EXCLUDE_PATHS)
 
 # Quick lint and format checks.
 QUICK = (
+    check_downstream_module.downstream_module_check,
     cpp_include_guard.include_guard_check,
     license.license_check,
     json_check.presubmit_check,

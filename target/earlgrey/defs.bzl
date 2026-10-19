@@ -3,7 +3,7 @@
 """Common definitions used by all earlgrey targets.
 """
 
-TARGET_COMPATIBLE_WITH = select({
-    "//target/earlgrey:target_earlgrey": [],
-    "//conditions:default": ["@platforms//:incompatible"],
-})
+load("//target:defs.bzl", "soc_compatible_with")
+
+# Compatible with every platform built on the Earl Grey SoC, in-tree or not.
+TARGET_COMPATIBLE_WITH = soc_compatible_with(str(Label("//target/earlgrey:soc_earlgrey")))

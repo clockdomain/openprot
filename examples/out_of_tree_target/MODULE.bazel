@@ -1,0 +1,99 @@
+# Licensed under the Apache-2.0 license
+# SPDX-License-Identifier: Apache-2.0
+#
+# An OpenPRoT target that lives outside the openprot repository.
+#
+# This module is the proof that openprot can be consumed as a Bazel
+# dependency: it defines a board on the AST10x0 SoC, reuses openprot's SoC
+# support crates, services and test harness, and never touches openprot's
+# own tree. CI builds it standalone from this directory.
+#
+# Everything below the `bazel_dep(name = "openprot")` line is boilerplate a
+# downstream module must copy, because Bazel only honours `*_override` and
+# `override_repo` directives in the root module. Keep this file in sync with
+# ../../MODULE.bazel; presubmit/check_downstream_module.py enforces that the
+# pinned commits match.
+
+module(
+    name = "openprot_example_target",
+    version = "0.0.1",
+)
+
+bazel_dep(name = "openprot", version = "0.0.1")
+local_path_override(
+    module_name = "openprot",
+    # A real downstream module uses `git_override(module_name = "openprot",
+    # remote = "https://github.com/OpenPRoT/openprot", commit = "...")`.
+    path = "../..",
+)
+
+bazel_dep(name = "bazel_skylib", version = "1.8.2")
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_rust", version = "0.70.0")
+
+# ── Overrides replicated from openprot's MODULE.bazel ──
+
+bazel_dep(name = "pigweed")
+git_override(
+    module_name = "pigweed",
+    commit = "294d431a761dc44fe07710c15d5ac1603f7ef7bf",
+    patch_args = ["-p1"],
+    patches = [],
+    remote = "https://pigweed.googlesource.com/pigweed/pigweed",
+)
+
+bazel_dep(name = "ureg")
+git_override(
+    module_name = "ureg",
+    commit = "4762ed5eef323a4267720a6b6da287c88738f901",
+    remote = "https://github.com/chipsalliance/caliptra-ureg",
+)
+
+bazel_dep(name = "caliptra_deps", version = "0.0.0")
+local_path_override(
+    module_name = "caliptra_deps",
+    # With a `git_override` of openprot, use instead:
+    #   git_override(module_name = "caliptra_deps", remote = <openprot remote>,
+    #                commit = <same commit>, strip_prefix = "third_party/caliptra")
+    path = "../../third_party/caliptra",
+)
+
+bazel_dep(name = "opentitan_devbundle")
+archive_override(
+    module_name = "opentitan_devbundle",
+    integrity = "sha256-LGKvET6WY+P4kwrZMSnkBrkqxS1f/ES/rmkPBQmfnwg=",
+    url = "https://github.com/lowRISC/opentitan/releases/download/devbundle-2026-06-02-1/devbundle.tar.xz",
+)
+
+# Crates. Every module that touches the crate_universe extension must declare
+# a universe of its own, so board-specific crates go in `@example_crates`
+# (from ./Cargo.toml). Crates shared with openprot are imported from its
+# `@rust_crates` hub rather than resolved again here: a second copy of, say,
+# zerocopy would be a distinct crate to rustc and break types that cross the
+# openprot/pigweed boundary.
+crate = use_extension("@rules_rust//crate_universe:extension.bzl", "crate")
+crate.from_cargo(
+    name = "example_crates",
+    cargo_lockfile = "//:Cargo.lock",
+    manifests = ["//:Cargo.toml"],
+    supported_platform_triples = [
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-apple-darwin",
+        "thumbv7em-none-eabi",
+    ],
+)
+use_repo(crate, "example_crates", "rust_crates")
+
+# openprot's `@rust_crates` resolves the embedded target triples that
+# pigweed's own crate repo lacks. openprot swaps pigweed's repo for it with
+# `override_repo`, which Bazel ignores outside the root module, so the
+# downstream root has to repeat the swap.
+
+pw_rust_crates_ext = use_extension("@pigweed//pw_build:pw_rust_crates_extension.bzl", "pw_rust_crates_extension")
+
+override_repo(
+    pw_rust_crates_ext,
+    rust_crates = "rust_crates",
+)

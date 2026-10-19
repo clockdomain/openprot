@@ -26,6 +26,7 @@
 # Developer Guide
 
 * [Architecture](./architecture.md)
+* [Out-of-tree Targets](./out-of-tree-targets.md)
 * [Coding Style](./coding-style.md)
 * [Contributing](./contributing.md)
 * [Development Process](./development-process.md)

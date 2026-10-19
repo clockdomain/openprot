@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 load("@rules_rust//rust:defs.bzl", "rust_library")
+load("//target:defs.bzl", "PW_KERNEL_TARGET_COMPATIBLE_WITH")
 
 rust_library(
     name = "orchestrator_server",
@@ -12,8 +13,8 @@ rust_library(
     crate_name = "openprot_orchestrator_server",
     edition = "2024",
     tags = ["kernel"],
-    # Any pw_kernel userspace target (ast10x0, earlgrey, veer); not the host.
-    target_compatible_with = ["@platforms//os:none"],
+    # Any pw_kernel target, in-tree or out-of-tree; never the host.
+    target_compatible_with = PW_KERNEL_TARGET_COMPATIBLE_WITH,
     visibility = ["//visibility:public"],
     deps = [
         "//services/orchestrator/sm:orchestrator_sm",

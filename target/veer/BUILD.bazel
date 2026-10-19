@@ -2,33 +2,29 @@
 # SPDX-License-Identifier: Apache-2.0
 
 load("@bazel_skylib//rules:common_settings.bzl", "string_flag")
-load("@pigweed//pw_build:merge_flags.bzl", "flags_from_dict")
-load("@pigweed//pw_kernel:flags.bzl", "KERNEL_DEVICE_COMMON_FLAGS")
 load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_library")
+load("//target:defs.bzl", "openprot_soc", "openprot_target")
 load("//target/veer:defs.bzl", "TARGET_COMPATIBLE_WITH")
 
-platform(
+openprot_soc(name = "veer")
+
+openprot_target(
     name = "veer",
     constraint_values = [
-        ":target_veer",
         "@pigweed//pw_kernel/arch/riscv:timer_clint",
         "@pigweed//pw_build/constraints/riscv/extensions:I",
         "@pigweed//pw_build/constraints/riscv/extensions:M",
         "@pigweed//pw_build/constraints/riscv/extensions:C",
         "@pigweed//pw_build/constraints/riscv/extensions:A.not",
-        "@pigweed//pw_build/constraints/rust:no_std",
         "@platforms//cpu:riscv32",
-        "@platforms//os:none",
     ],
-    flags = flags_from_dict(
-        KERNEL_DEVICE_COMMON_FLAGS | {
-            "@pigweed//pw_kernel/arch/riscv:veer_pic": True,
-            "@pigweed//pw_kernel/config:kernel_config": ":config",
-            "@pigweed//pw_kernel/subsys/console:console_backend": ":console",
-            "@pigweed//pw_log/rust:pw_log_backend": "@pigweed//pw_kernel:log_backend_basic",
-        },
-    ),
-    visibility = [":__subpackages__"],
+    flags = {
+        "@pigweed//pw_kernel/arch/riscv:veer_pic": True,
+        "@pigweed//pw_kernel/config:kernel_config": ":config",
+        "@pigweed//pw_kernel/subsys/console:console_backend": ":console",
+        "@pigweed//pw_log/rust:pw_log_backend": "@pigweed//pw_kernel:log_backend_basic",
+    },
+    soc = ":soc_veer",
 )
 
 string_flag(
@@ -54,12 +50,6 @@ config_setting(
 config_setting(
     name = "emulator",
     flag_values = {":target_type": "emulator"},
-)
-
-constraint_value(
-    name = "target_veer",
-    constraint_setting = "@pigweed//pw_kernel/target:target",
-    visibility = [":__subpackages__"],
 )
 
 rust_library(
