@@ -6,8 +6,9 @@
 
 use openprot_orchestrator_sm::{BootFailureKind, ComponentId, ComponentKind};
 
-pub use orchestrator_capabilities::{BootControl, BootWatch};
-use orchestrator_capabilities::{Svn, SvnFloor};
+pub use orchestrator_capabilities::{BootControl, BootWatch, FlashGuard};
+use orchestrator_capabilities::{GuardRules, Svn, SvnFloor, Violation};
+pub use orchestrator_config::{RegionSource, ViolationPolicy};
 
 /// Access to one component's active firmware image, however it is reached —
 /// interposed flash, a PLDM/MCTP transfer, a RAM copy in tests.
@@ -66,6 +67,20 @@ pub trait Verifier {
         id: ComponentId,
         image: &mut impl ImageSource,
     ) -> Result<Verdict, Self::Error>;
+
+    /// The flash-guard rules of `id`'s last authenticated image, for a board
+    /// whose table says [`RegionSource::Manifest`].
+    ///
+    /// Verification is the only authenticated reading of the manifest, so a
+    /// verifier that finds the writable spans there keeps them from
+    /// [`verify`](Self::verify) and hands them out here; the driver passes
+    /// them to `ArmFlashGuard`. `None` means no authenticated image is on
+    /// record for `id`, and the arm fails closed. The default is for boards
+    /// whose spans are table data and never consult the manifest.
+    fn guard_rules(&self, id: ComponentId) -> Option<GuardRules<'_>> {
+        let _ = id;
+        None
+    }
 }
 
 impl<V: Verifier> Verifier for &mut V {
@@ -78,6 +93,11 @@ impl<V: Verifier> Verifier for &mut V {
         image: &mut impl ImageSource,
     ) -> Result<Verdict, Self::Error> {
         (**self).verify(id, image)
+    }
+
+    #[inline(always)]
+    fn guard_rules(&self, id: ComponentId) -> Option<GuardRules<'_>> {
+        (**self).guard_rules(id)
     }
 }
 
@@ -129,6 +149,14 @@ pub enum Report {
     /// discarded and no verdict for that request follows. Platform-wide for
     /// the same reason as [`Report::UpdateDeferred`].
     UpdateAborted,
+    /// The component's flash guard blocked a transaction. Reported for every
+    /// violation under both [`ViolationPolicy`] values; under `Recover` a
+    /// blocked write additionally becomes `Event::FlashTampered`. Not the
+    /// mirror of an effect: the driver reads it from the guard.
+    FlashViolation {
+        id: ComponentId,
+        violation: Violation,
+    },
 }
 
 /// Where the driver hands its [`Report`]s. What a report becomes, a log
@@ -176,7 +204,28 @@ pub trait BoardCapabilities {
     type SvnFloor: SvnFloor;
     /// Where reports go. `()` for a board with no management side to tell.
     type ReportSink: ReportSink;
+    /// The SPI filter in front of a guarded component's flash.
+    /// `orchestrator_capabilities::NoFlashGuard` for a board on which no
+    /// device has one.
+    type FlashGuard: FlashGuard;
     // Later seams: Recovery, Staging.
+}
+
+/// Whether, and how, a SPI filter fronts one component's flash. The board
+/// builds one per component from its device table's `FlashGuardConfig`.
+pub enum GuardBinding<G: FlashGuard> {
+    /// No filter: `ArmFlashGuard` is a no-op and reset actuation touches no
+    /// bus.
+    Unguarded,
+    /// A filter guards the flash.
+    Guarded {
+        /// The adapter that programs it.
+        guard: G,
+        /// Where the writable spans come from at each arm.
+        regions: RegionSource,
+        /// What a blocked transaction becomes.
+        violations: ViolationPolicy,
+    },
 }
 
 /// Who keeps one component's anti-rollback floor. Spelled as its own type
@@ -204,6 +253,7 @@ pub enum SvnFloorBinding<F: SvnFloor> {
 ///     type BootWatch = CheckpointWalk;    // GPIO checkpoint walk over the boot window
 ///     type SvnFloor = OtpSvnFloor;        // fuse-backed anti-rollback floor
 ///     type ReportSink = MctpReports;      // reports out over the management transport
+///     type FlashGuard = HalFlashGuard<SpiMonitor>; // SPI monitor in front of the BMC flash
 /// }
 /// let board = Board::<Ast1060Board, 2> {
 ///     images: [bmc_image, cpld_image],
@@ -213,6 +263,11 @@ pub enum SvnFloorBinding<F: SvnFloor> {
 ///     component_kinds: [ComponentKind::Active, ComponentKind::Passive],
 ///     svn_floors: [SvnFloorBinding::Erot(bmc_floor), SvnFloorBinding::SelfManaged],
 ///     report_sink,
+///     flash_guards: [
+///         GuardBinding::Guarded { guard: bmc_guard, regions: RegionSource::Manifest,
+///                                 violations: ViolationPolicy::Recover },
+///         GuardBinding::Unguarded,
+///     ],
 /// };
 /// ```
 pub struct Board<B: BoardCapabilities, const N: usize> {
@@ -237,5 +292,8 @@ pub struct Board<B: BoardCapabilities, const N: usize> {
     /// Where the driver hands the SM's reports. One per platform, not one
     /// per component: two of the four reports name no component.
     pub report_sink: B::ReportSink,
+    /// `flash_guards[i]` is the filter in front of `ComponentId(i)`'s flash,
+    /// or `Unguarded`, same indexing as `images`.
+    pub flash_guards: [GuardBinding<B::FlashGuard>; N],
     // Later seams add fields, e.g. recovery: [B::Recovery; N].
 }

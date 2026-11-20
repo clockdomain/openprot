@@ -17,13 +17,15 @@
 //! Everything device-specific arrives through the seams in [`board`]:
 //! image access ([`ImageSource`]), image judgment ([`Verifier`]), reset
 //! actuation ([`orchestrator_capabilities::BootControl`]), boot
-//! supervision ([`orchestrator_capabilities::BootWatch`]) and the
-//! anti-rollback floor ([`orchestrator_capabilities::SvnFloor`]), bundled
-//! in one [`Board`] built by the board's composition crate.
+//! supervision ([`orchestrator_capabilities::BootWatch`]), the
+//! anti-rollback floor ([`orchestrator_capabilities::SvnFloor`]) and the
+//! flash guard ([`orchestrator_capabilities::FlashGuard`]), bundled in one
+//! [`Board`] built by the board's composition crate.
 //!
-//! Boot-walk verdicts are the one asynchronous read: the run loop calls
-//! [`PlatformDriver::poll_boot_walks`] and dispatches the returned events
-//! (`ComponentReady`/`Booted`/`BootFailed`) into the SM.
+//! Boot-walk verdicts and flash-guard violations are the asynchronous reads:
+//! the run loop calls [`PlatformDriver::poll_boot_walks`] and
+//! [`PlatformDriver::poll_flash_guards`] and dispatches the returned events
+//! (`ComponentReady`/`Booted`/`BootFailed`, `FlashTampered`) into the SM.
 //!
 //! [`Platform`]: openprot_orchestrator_sm::Platform
 
@@ -36,6 +38,7 @@ mod driver;
 mod tests;
 
 pub use board::{
-    Board, BoardCapabilities, ImageSource, Report, ReportSink, SvnFloorBinding, Verdict, Verifier,
+    Board, BoardCapabilities, GuardBinding, ImageSource, Report, ReportSink, SvnFloorBinding,
+    Verdict, Verifier,
 };
 pub use driver::{BootWalkPoll, DriverError, PlatformDriver};

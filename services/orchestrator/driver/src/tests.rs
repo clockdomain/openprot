@@ -3,14 +3,39 @@
 
 extern crate std;
 
+use crate::board::{RegionSource, ViolationPolicy};
 use crate::*;
 use openprot_orchestrator_sm::{
     BootFailureKind, ComponentAttrs, ComponentId, ComponentKind, Effect, Event, Orchestrator,
     Platform, PowerOnResult, State,
 };
-use orchestrator_capabilities::{BootWatch, FailureCause, Svn, SvnFloor, WalkVerdict};
+use orchestrator_capabilities::{
+    BootWatch, FailureCause, FlashGuard, GuardRules, Owner, Svn, SvnFloor, Violation, WalkVerdict,
+};
 
 const C0: ComponentId = ComponentId::new(0);
+
+/// One actuation on the shared trace, so a test can assert the order in
+/// which the reset line and the flash bus were touched across two mocks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Step {
+    Hold,
+    Release,
+    Arm,
+    Connect(Owner),
+}
+
+type Trace = std::rc::Rc<core::cell::RefCell<std::vec::Vec<Step>>>;
+
+fn trace() -> Trace {
+    std::rc::Rc::new(core::cell::RefCell::new(std::vec::Vec::new()))
+}
+
+fn record(trace: &Option<Trace>, step: Step) {
+    if let Some(t) = trace {
+        t.borrow_mut().push(step);
+    }
+}
 
 // Test image convention, shared with the fwmanager itests: 4 magic bytes,
 // payload, final byte makes the XOR over the image zero. A board-side
@@ -113,6 +138,10 @@ struct XorVerifier {
     /// A real verifier reads it from the signed manifest of the image it
     /// just checked; the test image format has no manifest, so tests pin it.
     svn: u32,
+    /// The writable spans this verifier claims to have read from the
+    /// manifest, for `RegionSource::Manifest` tests. `None`: no
+    /// authenticated image on record.
+    manifest_writable: Option<std::vec::Vec<(u32, u32)>>,
 }
 
 impl Verifier for XorVerifier {
@@ -149,6 +178,15 @@ impl Verifier for XorVerifier {
             Verdict::Rejected
         })
     }
+
+    fn guard_rules(&self, _id: ComponentId) -> Option<GuardRules<'_>> {
+        self.manifest_writable
+            .as_deref()
+            .map(|writable| GuardRules {
+                writable,
+                unreadable: &[],
+            })
+    }
 }
 
 #[derive(Debug)]
@@ -167,6 +205,7 @@ impl core::error::Error for ResetFault {}
 struct MockReset {
     held: std::rc::Rc<core::cell::Cell<bool>>,
     fail: bool,
+    trace: Option<Trace>,
 }
 
 impl MockReset {
@@ -174,6 +213,14 @@ impl MockReset {
         Self {
             held: std::rc::Rc::new(core::cell::Cell::new(true)),
             fail: false,
+            trace: None,
+        }
+    }
+
+    fn traced(trace: &Trace) -> Self {
+        Self {
+            trace: Some(trace.clone()),
+            ..Self::new()
         }
     }
 }
@@ -186,6 +233,7 @@ impl orchestrator_capabilities::BootControl for MockReset {
             return Err(ResetFault);
         }
         self.held.set(true);
+        record(&self.trace, Step::Hold);
         Ok(())
     }
 
@@ -194,7 +242,102 @@ impl orchestrator_capabilities::BootControl for MockReset {
             return Err(ResetFault);
         }
         self.held.set(false);
+        record(&self.trace, Step::Release);
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct GuardFault;
+
+impl core::fmt::Display for GuardFault {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("guard fault")
+    }
+}
+
+impl core::error::Error for GuardFault {}
+
+/// A flash guard without a filter: records what it is asked, serves a
+/// scripted violation log. Tests read it back through
+/// `PlatformDriver::board`.
+/// The spans one `arm` call carried: `(writable, unreadable)`.
+type ArmedRules = (std::vec::Vec<(u32, u32)>, std::vec::Vec<(u32, u32)>);
+
+struct MockGuard {
+    armed: std::vec::Vec<ArmedRules>,
+    owner: Owner,
+    violations: std::collections::VecDeque<Violation>,
+    fail_arm: bool,
+    fail: bool,
+    trace: Option<Trace>,
+}
+
+impl MockGuard {
+    fn new() -> Self {
+        Self {
+            armed: std::vec::Vec::new(),
+            owner: Owner::Rot,
+            violations: Default::default(),
+            fail_arm: false,
+            fail: false,
+            trace: None,
+        }
+    }
+
+    fn traced(trace: &Trace) -> Self {
+        Self {
+            trace: Some(trace.clone()),
+            ..Self::new()
+        }
+    }
+
+    fn logging(violations: &[Violation]) -> Self {
+        Self {
+            violations: violations.iter().copied().collect(),
+            ..Self::new()
+        }
+    }
+}
+
+impl FlashGuard for MockGuard {
+    type Error = GuardFault;
+
+    fn arm(&mut self, rules: &GuardRules<'_>) -> Result<(), GuardFault> {
+        if self.fail || self.fail_arm {
+            return Err(GuardFault);
+        }
+        self.armed
+            .push((rules.writable.to_vec(), rules.unreadable.to_vec()));
+        record(&self.trace, Step::Arm);
+        Ok(())
+    }
+
+    fn connect(&mut self, owner: Owner) -> Result<(), GuardFault> {
+        if self.fail {
+            return Err(GuardFault);
+        }
+        self.owner = owner;
+        record(&self.trace, Step::Connect(owner));
+        Ok(())
+    }
+
+    fn take_violation(&mut self) -> Result<Option<Violation>, GuardFault> {
+        if self.fail {
+            return Err(GuardFault);
+        }
+        Ok(self.violations.pop_front())
+    }
+}
+
+/// The guard a test bound to `ComponentId(i)`.
+fn guard_of<B: BoardCapabilities<FlashGuard = MockGuard>, const N: usize>(
+    driver: &PlatformDriver<B, N>,
+    i: usize,
+) -> &MockGuard {
+    match &driver.board().flash_guards[i] {
+        GuardBinding::Guarded { guard, .. } => guard,
+        GuardBinding::Unguarded => panic!("component {i} has no guard"),
     }
 }
 
@@ -302,6 +445,7 @@ impl BoardCapabilities for MockBoard {
     type BootWatch = MockWalk;
     type SvnFloor = MockFloor;
     type ReportSink = RecordingSink;
+    type FlashGuard = MockGuard;
 }
 
 /// The SVN `mock_board`'s verifier vouches for. Tests that read the floor
@@ -316,12 +460,14 @@ fn mock_board<const N: usize>() -> Board<MockBoard, N> {
         verifier: XorVerifier {
             fault: false,
             svn: MOCK_SVN,
+            manifest_writable: None,
         },
         boot_controls: core::array::from_fn(|_| MockReset::new()),
         boot_watches: core::array::from_fn(|_| MockWalk::idle()),
         component_kinds: core::array::from_fn(|_| ComponentKind::Passive),
         svn_floors: core::array::from_fn(|_| SvnFloorBinding::Erot(MockFloor::new())),
         report_sink: RecordingSink::new(),
+        flash_guards: core::array::from_fn(|_| GuardBinding::Unguarded),
     }
 }
 
@@ -410,6 +556,7 @@ fn verifier_fault_fails_closed() {
         verifier: XorVerifier {
             fault: true,
             svn: MOCK_SVN,
+            manifest_writable: None,
         },
         ..mock_board()
     });
@@ -545,6 +692,7 @@ impl BoardCapabilities for WatchBoard {
     type Verifier = LineWatchingVerifier;
     type BootControl = MockReset;
     type BootWatch = MockWalk;
+    type FlashGuard = MockGuard;
     type SvnFloor = MockFloor;
     // A board with nothing to tell: exercises the no-op sink.
     type ReportSink = ();
@@ -563,6 +711,7 @@ fn release_follows_verification() {
             inner: XorVerifier {
                 fault: false,
                 svn: MOCK_SVN,
+                manifest_writable: None,
             },
             line: held.clone(),
             held_during_verify: held_during_verify.clone(),
@@ -572,6 +721,7 @@ fn release_follows_verification() {
         component_kinds: [ComponentKind::Passive],
         svn_floors: [SvnFloorBinding::Erot(MockFloor::new())],
         report_sink: (),
+        flash_guards: core::array::from_fn(|_| GuardBinding::Unguarded),
     });
     let mut orch = orchestrator();
 
@@ -888,7 +1038,7 @@ impl ReportSink for RecordingSink {
 }
 
 /// One of each report, so a test covers the whole enum.
-fn every_report() -> [Report; 5] {
+fn every_report() -> [Report; 6] {
     [
         Report::Isolated(C0),
         Report::RecoveryFailed(C0),
@@ -899,6 +1049,10 @@ fn every_report() -> [Report; 5] {
         },
         Report::UpdateDeferred,
         Report::UpdateAborted,
+        Report::FlashViolation {
+            id: C0,
+            violation: Violation::BlockedOpcode(0xc7),
+        },
     ]
 }
 
@@ -906,7 +1060,7 @@ fn every_report() -> [Report; 5] {
 // over; the unit sink is a wiring choice and satisfies the same caller.
 #[test]
 fn every_report_reaches_a_sink() {
-    fn tell<S: ReportSink>(sink: &mut S, reports: [Report; 5]) {
+    fn tell<S: ReportSink>(sink: &mut S, reports: [Report; 6]) {
         for report in reports {
             sink.report(report);
         }
@@ -1025,6 +1179,7 @@ fn reports_reach_the_board_sink() {
         verifier: XorVerifier {
             fault: false,
             svn: 0,
+            manifest_writable: None,
         },
         ..mock_board()
     });
@@ -1043,7 +1198,9 @@ fn reports_reach_the_board_sink() {
         assert_eq!(driver.execute(effect), Ok(None));
     }
 
-    assert_eq!(driver.board().report_sink.seen, every_report());
+    // `FlashViolation` is read from the guard, not mirrored from an effect,
+    // so it is the one report no `Effect::Report*` produces.
+    assert_eq!(driver.board().report_sink.seen, every_report()[..5]);
 }
 
 // An Isolable component is contained and reported, and the platform keeps
@@ -1055,6 +1212,7 @@ fn reporting_an_isolated_component_does_not_lock_the_platform() {
         verifier: XorVerifier {
             fault: false,
             svn: 0,
+            manifest_writable: None,
         },
         ..mock_board()
     });
@@ -1074,4 +1232,334 @@ fn reporting_an_isolated_component_does_not_lock_the_platform() {
 
     assert_eq!(orch.state(), State::Ready, "contained, not locked");
     assert_eq!(driver.board().report_sink.seen, [Report::Isolated(C1)]);
+}
+
+// ---------------------------------------------------------------------------
+// Flash guard: arming, bus handover, violations.
+// ---------------------------------------------------------------------------
+
+const BMC_WRITABLE: &[(u32, u32)] = &[(0x0200_0000, 0x020f_ffff)];
+const MANIFEST_WRITABLE: &[(u32, u32)] = &[(0x0010_0000, 0x001f_ffff), (0x0030_0000, 0x0030_ffff)];
+
+fn guarded(
+    guard: MockGuard,
+    regions: RegionSource,
+    violations: ViolationPolicy,
+) -> GuardBinding<MockGuard> {
+    GuardBinding::Guarded {
+        guard,
+        regions,
+        violations,
+    }
+}
+
+/// A 1-component driver whose device is behind `guard`.
+fn guarded_driver(
+    guard: MockGuard,
+    regions: RegionSource,
+    violations: ViolationPolicy,
+) -> PlatformDriver<MockBoard, 1> {
+    PlatformDriver::new(Board {
+        flash_guards: [guarded(guard, regions, violations)],
+        ..mock_board()
+    })
+}
+
+// The effect's contract: a component with no guard arms nothing and
+// succeeds, so one reducer serves boards with and without filters.
+#[test]
+fn arm_without_a_guard_is_a_no_op() {
+    let mut driver = PlatformDriver::<MockBoard, 1>::new(mock_board());
+
+    assert_eq!(driver.execute(Effect::ArmFlashGuard(C0)), Ok(None));
+    assert_eq!(
+        driver.arm_flash_guard(C1),
+        Err(DriverError::UnknownComponent)
+    );
+}
+
+// Table rules reach the guard verbatim: the table's spans are the writable
+// ones and nothing is unreadable.
+#[test]
+fn arm_loads_table_rules_into_the_guard() {
+    let mut driver = guarded_driver(
+        MockGuard::new(),
+        RegionSource::Table(BMC_WRITABLE),
+        ViolationPolicy::Recover,
+    );
+
+    driver.arm_flash_guard(C0).unwrap();
+
+    assert_eq!(
+        guard_of(&driver, 0).armed,
+        std::vec![(BMC_WRITABLE.to_vec(), std::vec::Vec::new())]
+    );
+}
+
+// Manifest rules come from the verifier, which is the only authenticated
+// reading of the manifest; without an authenticated image on record the
+// arm fails closed rather than arming an empty or stale layout.
+#[test]
+fn arm_from_manifest_uses_the_verifier_spans() {
+    let mut driver = PlatformDriver::<MockBoard, 1>::new(Board {
+        verifier: XorVerifier {
+            fault: false,
+            svn: MOCK_SVN,
+            manifest_writable: Some(MANIFEST_WRITABLE.to_vec()),
+        },
+        flash_guards: [guarded(
+            MockGuard::new(),
+            RegionSource::Manifest,
+            ViolationPolicy::Recover,
+        )],
+        ..mock_board()
+    });
+
+    driver.arm_flash_guard(C0).unwrap();
+
+    assert_eq!(
+        guard_of(&driver, 0).armed,
+        std::vec![(MANIFEST_WRITABLE.to_vec(), std::vec::Vec::new())]
+    );
+}
+
+#[test]
+fn arm_from_manifest_without_an_authenticated_image_fails_closed() {
+    let mut driver = guarded_driver(
+        MockGuard::new(),
+        RegionSource::Manifest,
+        ViolationPolicy::Recover,
+    );
+
+    assert_eq!(
+        driver.arm_flash_guard(C0),
+        Err(DriverError::GuardRulesUnavailable)
+    );
+    assert!(guard_of(&driver, 0).armed.is_empty());
+}
+
+// The bus changes hands on the safe side of the reset line both ways: the
+// device gets the flash before it leaves reset, and the RoT gets it back
+// only once the device is held.
+#[test]
+fn bus_handover_brackets_the_reset_line() {
+    let trace = trace();
+    let mut driver = PlatformDriver::<MockBoard, 1>::new(Board {
+        boot_controls: [MockReset::traced(&trace)],
+        flash_guards: [guarded(
+            MockGuard::traced(&trace),
+            RegionSource::Table(BMC_WRITABLE),
+            ViolationPolicy::Recover,
+        )],
+        ..mock_board()
+    });
+
+    driver.release_reset(C0).unwrap();
+    driver.assert_reset(C0).unwrap();
+
+    assert_eq!(
+        *trace.borrow(),
+        std::vec![
+            Step::Connect(Owner::Device),
+            Step::Release,
+            Step::Hold,
+            Step::Connect(Owner::Rot),
+        ]
+    );
+}
+
+// End to end through the reducer: verify, arm, hand over, release, in
+// that order, from one PowerGood.
+#[test]
+fn guard_is_armed_before_the_device_is_released() {
+    let trace = trace();
+    let mut driver = PlatformDriver::<MockBoard, 1>::new(Board {
+        boot_controls: [MockReset::traced(&trace)],
+        flash_guards: [guarded(
+            MockGuard::traced(&trace),
+            RegionSource::Table(BMC_WRITABLE),
+            ViolationPolicy::Recover,
+        )],
+        ..mock_board()
+    });
+    let mut orch = orchestrator();
+
+    orch.dispatch(&mut driver, Event::PowerGood(PowerOnResult::Provisioned));
+
+    assert_eq!(orch.state(), State::Ready);
+    assert_eq!(
+        *trace.borrow(),
+        std::vec![Step::Arm, Step::Connect(Owner::Device), Step::Release]
+    );
+}
+
+// A guard that cannot be proven armed does not get a device released
+// behind it: the SM fails closed and the device never leaves reset.
+#[test]
+fn failed_arm_fails_closed_before_release() {
+    let trace = trace();
+    let control = MockReset::traced(&trace);
+    let held = control.held.clone();
+    let mut guard = MockGuard::traced(&trace);
+    guard.fail_arm = true;
+    let mut driver = PlatformDriver::<MockBoard, 1>::new(Board {
+        boot_controls: [control],
+        flash_guards: [guarded(
+            guard,
+            RegionSource::Table(BMC_WRITABLE),
+            ViolationPolicy::Recover,
+        )],
+        ..mock_board()
+    });
+    let mut orch = orchestrator();
+
+    orch.dispatch(&mut driver, Event::PowerGood(PowerOnResult::Provisioned));
+
+    assert_eq!(orch.state(), State::Locked);
+    assert!(held.get(), "never left reset");
+    assert!(
+        trace.borrow().is_empty(),
+        "nothing actuated after the failed arm"
+    );
+}
+
+#[test]
+fn failed_bus_handover_fails_closed_before_release() {
+    let control = MockReset::new();
+    let held = control.held.clone();
+    let mut guard = MockGuard::new();
+    guard.fail = true;
+    let mut driver = PlatformDriver::<MockBoard, 1>::new(Board {
+        boot_controls: [control],
+        flash_guards: [guarded(
+            guard,
+            RegionSource::Table(BMC_WRITABLE),
+            ViolationPolicy::Recover,
+        )],
+        ..mock_board()
+    });
+
+    assert_eq!(driver.release_reset(C0), Err(DriverError::FlashGuardFault));
+    assert!(held.get(), "never left reset");
+}
+
+const LOG: &[Violation] = &[
+    Violation::BlockedRead(0x0000_0000),
+    Violation::BlockedWrite(0x0000_4000),
+    Violation::BlockedOpcode(0xc7),
+];
+
+// Under Recover a blocked write is evidence: it becomes FlashTampered, and
+// every entry still reaches the sink. Reads and opcodes are report-only.
+#[test]
+fn blocked_write_under_recover_becomes_flash_tampered() {
+    let mut driver = guarded_driver(
+        MockGuard::logging(LOG),
+        RegionSource::Table(BMC_WRITABLE),
+        ViolationPolicy::Recover,
+    );
+
+    assert_eq!(
+        driver.poll_flash_guards(),
+        Ok(Some(Event::FlashTampered(C0)))
+    );
+    assert_eq!(driver.poll_flash_guards(), Ok(None));
+    assert_eq!(
+        driver.board().report_sink.seen,
+        LOG.iter()
+            .map(|&violation| Report::FlashViolation { id: C0, violation })
+            .collect::<std::vec::Vec<_>>()
+    );
+}
+
+// Under Log the same log changes nothing: reported, never escalated.
+#[test]
+fn violations_under_log_policy_are_report_only() {
+    let mut driver = guarded_driver(
+        MockGuard::logging(LOG),
+        RegionSource::Table(BMC_WRITABLE),
+        ViolationPolicy::Log,
+    );
+
+    assert_eq!(driver.poll_flash_guards(), Ok(None));
+    assert_eq!(driver.board().report_sink.seen.len(), LOG.len());
+}
+
+// A guard that cannot be read is a fault, not an empty log.
+#[test]
+fn unreadable_guard_log_is_a_fault() {
+    let mut guard = MockGuard::new();
+    guard.fail = true;
+    let mut driver = guarded_driver(
+        guard,
+        RegionSource::Table(BMC_WRITABLE),
+        ViolationPolicy::Recover,
+    );
+
+    assert_eq!(
+        driver.poll_flash_guards(),
+        Err(DriverError::FlashGuardFault)
+    );
+}
+
+// Tampering runs the corruption path. For an `Isolable` device that means it
+// is gated: held in reset, with the bus back at the RoT, and reported. (A
+// `Required` device enters recovery instead, which ends at
+// `RecoverComponent`; that executor is not composed yet and fails closed, as
+// `boot_failure_fails_closed_without_recovery` documents.)
+#[test]
+fn tampering_on_an_isolable_device_holds_it_and_takes_the_bus_back() {
+    let trace = trace();
+    let control = MockReset::traced(&trace);
+    let held = control.held.clone();
+    let mut driver = PlatformDriver::<MockBoard, 1>::new(Board {
+        boot_controls: [control],
+        flash_guards: [guarded(
+            MockGuard::traced(&trace),
+            RegionSource::Table(BMC_WRITABLE),
+            ViolationPolicy::Recover,
+        )],
+        ..mock_board()
+    });
+    let mut chain = heapless::Vec::<_, 1>::new();
+    chain
+        .push((C0, ComponentAttrs::passive_isolable()))
+        .unwrap();
+    let mut orch = Orchestrator::<1, 4>::new(chain.try_into().unwrap(), 3);
+    orch.dispatch(&mut driver, Event::PowerGood(PowerOnResult::Provisioned));
+    assert_eq!(orch.state(), State::Ready);
+    assert!(!held.get());
+    trace.borrow_mut().clear();
+
+    match &mut driver.board_mut().flash_guards[0] {
+        GuardBinding::Guarded { guard, .. } => {
+            guard
+                .violations
+                .push_back(Violation::BlockedWrite(0x0000_4000));
+        }
+        GuardBinding::Unguarded => unreachable!(),
+    }
+    let tampered = driver
+        .poll_flash_guards()
+        .unwrap()
+        .expect("blocked write escalates");
+    orch.dispatch(&mut driver, tampered);
+
+    assert_eq!(orch.state(), State::Ready, "contained, not locked");
+    assert!(held.get(), "held again");
+    assert_eq!(
+        *trace.borrow(),
+        std::vec![Step::Hold, Step::Connect(Owner::Rot)],
+        "quiesced, then the RoT owns the flash"
+    );
+    assert_eq!(
+        driver.board().report_sink.seen,
+        [
+            Report::FlashViolation {
+                id: C0,
+                violation: Violation::BlockedWrite(0x0000_4000),
+            },
+            Report::Isolated(C0),
+        ]
+    );
 }

@@ -17,6 +17,12 @@ of the project.
 -   [**Thread priorities**](./thread-priorities.md): How `pw_kernel` schedules
     threads (strict priority, no inheritance) and the scheme servers and
     clients follow, so that a server never ranks below its clients.
+-   [**SPI flash filter**](./spi-filter.md): The HAL contract for the SPI
+    monitors that gate a host's access to its flash (`SpiFilter` and its
+    capability traits, `hal/blocking/spi_filter/`), mapped onto the AST1060,
+    OpenTitan, CEC173x and MCX A577, and onto the AST10x0 driver in
+    `target/ast10x0/`. How the orchestrator arms one is on the
+    [platform page](./orchestrator/orchestrator-platform.md#flash-guarding).
 -   [**Orchestrator**](./orchestrator/orchestrator-overview.md): The eRoT boot-sequence state
     machine (`services/orchestrator/sm`). Covers the two-tier firmware
     verification model (`ComponentAttrs`, eRoT gate, iRoT gate), the

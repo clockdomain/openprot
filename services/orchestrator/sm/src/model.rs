@@ -231,6 +231,16 @@ pub enum Event {
     BootConfirmed(ComponentId),
     /// This component was found corrupt at runtime.
     CorruptionDetected(ComponentId),
+    /// The flash guard for `id` blocked a write into a protected span while
+    /// the device was running. The write did not land, so the flash is
+    /// unchanged, but a device that tries to overwrite its own firmware is no
+    /// longer trusted to keep running: handled exactly like
+    /// [`Event::CorruptionDetected`]. The platform driver produces this only
+    /// under the board's `ViolationPolicy::Recover`; blocked reads and
+    /// opcodes are reported, never escalated. A separate variant keeps the
+    /// two causes distinct in reports and lets tampering get its own policy
+    /// later without touching corruption.
+    FlashTampered(ComponentId),
     /// This component has been restored from its configured recovery source.
     Restored(ComponentId),
     /// The platform has no remaining recovery source for `id` (its configured
@@ -305,6 +315,7 @@ impl Event {
             | Event::Booted(id)
             | Event::BootConfirmed(id)
             | Event::CorruptionDetected(id)
+            | Event::FlashTampered(id)
             | Event::Restored(id)
             | Event::RecoveryUnavailable(id)
             | Event::BootFailed { id, .. }
@@ -331,6 +342,25 @@ pub enum Effect {
     ReadFirmware(ComponentId),
     VerifyFirmware(ComponentId),
     ReleaseReset(ComponentId),
+    /// Arm the flash guard for `id` with the rules derived from its verified
+    /// image, before the device runs. Emitted immediately before every
+    /// [`ReleaseReset`](Effect::ReleaseReset) of the same component; a board
+    /// whose device has no guard executes it as a no-op. An explicit effect
+    /// rather than a step hidden inside the driver's release, so that the
+    /// order "armed, then released" is a line in the effect trace a test can
+    /// assert on, a failure is attributed to the guard and not to the reset
+    /// line, and the effect list stays the reducer's whole contract with the
+    /// platform.
+    ///
+    /// Arming rides the verify path, not the host-reset path: the rules can
+    /// only legitimately change when the verified image changes, so every
+    /// `VerificationPassed` re-arms, and a reset with no firmware change
+    /// re-arms the same rules, cheaply. (ASPEED's PFR firmware rewrites its
+    /// filter tables on every host reset instead, because that is where its
+    /// state machine is.) A device that resets at runtime is caught by
+    /// `BootWatch`, enters recovery through `BootFailed`, and is re-verified
+    /// and re-armed on the way back through `PreSupervision`.
+    ArmFlashGuard(ComponentId),
     /// Assert reset on a component that is already running — the inverse of
     /// [`ReleaseReset`]. Emitted when an `Isolable`/`Cascading` component is
     /// found corrupt at runtime, or is held after recovery is exhausted: the

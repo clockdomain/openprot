@@ -50,6 +50,7 @@
 mod boot_control;
 mod boot_watch;
 mod evidence;
+mod flash_guard;
 mod lockdown_latch;
 mod recovery;
 mod svn_floor;
@@ -59,6 +60,7 @@ mod updatable;
 pub use boot_control::BootControl;
 pub use boot_watch::{BootWatch, FailureCause, WalkVerdict};
 pub use evidence::{BootStatus, EvidenceReader};
+pub use flash_guard::{FlashGuard, GuardRules, NoFlashGuard, Owner, Violation};
 pub use lockdown_latch::LockdownLatch;
 pub use recovery::{Recovery, RestoreOutcome};
 pub use svn_floor::{Svn, SvnFloor};

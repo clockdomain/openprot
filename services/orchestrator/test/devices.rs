@@ -9,7 +9,9 @@
 
 use core::time::Duration;
 
-use orchestrator_config::{BootCheckpoint, DeviceConfig};
+use orchestrator_config::{
+    BootCheckpoint, DeviceConfig, FilterLockPolicy, FlashGuardConfig, RegionSource, ViolationPolicy,
+};
 
 /// The mock board's boot-probe vocabulary. The schema carries these
 /// opaquely; only this board's `EvidenceReader` gives them meaning.
@@ -24,15 +26,28 @@ pub enum MockProbe {
     Heartbeat,
 }
 
+/// The mock board's SPI filters, by monitor index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MockFilter(pub u8);
+
+/// Commands the BMC's flash part needs: read, fast read, JEDEC id, status,
+/// write enable, page program, 4 KiB and 64 KiB erase.
+const BMC_OPCODES: &[u8] = &[0x03, 0x0b, 0x9f, 0x05, 0x06, 0x02, 0x20, 0xd8];
+
+/// The BMC may write its own log and config partitions; the rest of its
+/// flash (bootloader, kernel, root filesystem) is read-only to it.
+const BMC_WRITABLE: &[(u32, u32)] = &[(0x0200_0000, 0x020f_ffff), (0x03f0_0000, 0x03ff_ffff)];
+
 /// Declaration order is the boot order: the orchestrator releases devices
 /// top to bottom, one at a time. This table is the authority — the
 /// orchestrator's chain of trust is built from it, never beside it.
 ///
 /// The mock board's reset controller addresses reset lines by plain index,
 /// so the reset id type is `u8`.
-pub const MANAGED_DEVICES: &[DeviceConfig<u8, MockProbe>] = &[
-    // Direct-flash SPI device (BMC archetype): the eRoT fronts its flash.
-    // Single checkpoint: it raises a boot-complete GPIO.
+pub const MANAGED_DEVICES: &[DeviceConfig<u8, MockProbe, MockFilter>] = &[
+    // Direct-flash SPI device (BMC archetype): the eRoT fronts its flash
+    // through SPI monitor 0, so it carries a flash guard. Single
+    // checkpoint: it raises a boot-complete GPIO.
     DeviceConfig::new(
         "bmc",
         7,
@@ -41,7 +56,14 @@ pub const MANAGED_DEVICES: &[DeviceConfig<u8, MockProbe>] = &[
             MockProbe::Gpio(12),
             Duration::from_secs(90),
         )],
-    ),
+    )
+    .with_flash_guard(FlashGuardConfig::new(
+        MockFilter(0),
+        BMC_OPCODES,
+        RegionSource::Table(BMC_WRITABLE),
+        FilterLockPolicy::CommandsOnly,
+        ViolationPolicy::Recover,
+    )),
     // PLDM device (NIC archetype): self-updating, SPDM-capable. Two
     // checkpoints, exercising the multi-checkpoint path: transport up
     // first, then proof the workload is alive.
@@ -58,7 +80,7 @@ pub const MANAGED_DEVICES: &[DeviceConfig<u8, MockProbe>] = &[
 /// Board-local checks the schema constructors cannot do — they know the
 /// schema's shape, not this board's meanings. Const-fence pattern: a bad
 /// probe fails the build.
-const fn validate_probes(devices: &[DeviceConfig<u8, MockProbe>]) {
+const fn validate_probes(devices: &[DeviceConfig<u8, MockProbe, MockFilter>]) {
     let mut i = 0;
     while i < devices.len() {
         let checkpoints = devices[i].checkpoints();
@@ -69,6 +91,13 @@ const fn validate_probes(devices: &[DeviceConfig<u8, MockProbe>]) {
                 assert!(line < 32, "gpio probe names a line outside the bank");
             }
             c += 1;
+        }
+        if let Some(guard) = devices[i].flash_guard() {
+            // The mock board has four SPI monitors, like the AST1060.
+            assert!(
+                guard.filter().0 < 4,
+                "flash guard names a monitor the board lacks"
+            );
         }
         i += 1;
     }

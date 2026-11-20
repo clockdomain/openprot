@@ -65,8 +65,10 @@ enum Outcome {
 /// live component) never pushes past this bound, because gating and quiescing
 /// are mutually exclusive per component: a component the cascade isolates is not
 /// also live, so the two counts never sum above the full-cascade worst case.
-/// `Rot::new` refuses to compile unless `E >= 2 * N + 2`, so a machine that
-/// builds can never overflow this buffer.
+/// The release path emits four (`ArmFlashGuard`, `ReleaseReset`, then the
+/// next component's `ReadFirmware`/`VerifyFirmware`), which that floor covers
+/// for every `N >= 1`. `Rot::new` refuses to compile unless `E >= 2 * N + 2`,
+/// so a machine that builds can never overflow this buffer.
 pub struct Sink<const E: usize> {
     effects: heapless::Vec<Effect, E>,
 }
@@ -585,6 +587,7 @@ impl<const N: usize, const E: usize> Rot<N, E> {
                     // The component passed its check — it has recovered, so its
                     // consecutive-failure streak ends (INV7: consecutive only).
                     self.clear_retry(*id);
+                    ctx.emit(Effect::ArmFlashGuard(*id));
                     ctx.emit(Effect::ReleaseReset(*id));
                     // Released: it is now live, and owes a boot-progress signal
                     // (both tiers).
@@ -622,7 +625,9 @@ impl<const N: usize, const E: usize> Rot<N, E> {
                 // exists in the first place. `AttestationChallenge` is left
                 // unhandled here (falls through to `Outcome::Super` and is
                 // discarded) — that's a separate question.
-                Event::CorruptionDetected(id) => self.handle_corruption_advancing(*id, ctx),
+                Event::CorruptionDetected(id) | Event::FlashTampered(id) => {
+                    self.handle_corruption_advancing(*id, ctx)
+                }
                 // Boot-progress liveness for a passive component released
                 // speculatively earlier in this same walk. Clear its watchdog
                 // even though `PreSupervision` is unsupervised — acting on a
@@ -709,6 +714,7 @@ impl<const N: usize, const E: usize> Rot<N, E> {
                     // The component passed its check — it has recovered, so its
                     // consecutive-failure streak ends (INV7: consecutive only).
                     self.clear_retry(*id);
+                    ctx.emit(Effect::ArmFlashGuard(*id));
                     ctx.emit(Effect::ReleaseReset(*id));
                     // Released: it is now live, and owes a boot-progress signal
                     // (both tiers).
@@ -734,7 +740,9 @@ impl<const N: usize, const E: usize> Rot<N, E> {
                 }
                 // Releases off `chain[cursor]` too, so the cursor must move
                 // off a component the cascade gated. `Handled` keeps `awaiting`.
-                Event::CorruptionDetected(id) => self.handle_corruption_advancing(*id, ctx),
+                Event::CorruptionDetected(id) | Event::FlashTampered(id) => {
+                    self.handle_corruption_advancing(*id, ctx)
+                }
                 // DeviceFatal: the device declared the image unrecoverable.
                 // Gate Isolable/Cascading immediately (cursor-advancing),
                 // recover Required. Non-fatal kinds and Timeout fall through
@@ -799,7 +807,7 @@ impl<const N: usize, const E: usize> Rot<N, E> {
                     ctx.emit(Effect::DiscardStaged);
                     Outcome::Transition(State::Ready)
                 }
-                Event::CorruptionDetected(id) => {
+                Event::CorruptionDetected(id) | Event::FlashTampered(id) => {
                     let outcome = self.handle_corruption(*id, ctx);
                     // Only a *preemption* (transition out to recovery) orphans
                     // the staged image. An `Isolable`/`Cascading` corruption
@@ -894,7 +902,9 @@ impl<const N: usize, const E: usize> Rot<N, E> {
             }
             // Reached from `Ready` and `Recovering` only: `PreSupervision`,
             // `AwaitingReady` and `Updating` handle this in their own arms.
-            Event::CorruptionDetected(id) => self.handle_corruption(*id, ctx),
+            Event::CorruptionDetected(id) | Event::FlashTampered(id) => {
+                self.handle_corruption(*id, ctx)
+            }
             // Boot-progress signals arriving after the walk left `PreSupervision`
             // / `AwaitingReady` (e.g. once the machine is already `Ready`): clear
             // the component's watchdog. `ComponentReady` is the active tier,

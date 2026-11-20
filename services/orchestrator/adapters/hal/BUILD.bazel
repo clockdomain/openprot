@@ -8,12 +8,14 @@ rust_library(
     srcs = [
         "src/gpio_boot_monitor.rs",
         "src/hal_boot_control.rs",
+        "src/hal_flash_guard.rs",
         "src/lib.rs",
     ],
     edition = "2024",
     visibility = ["//visibility:public"],
     deps = [
         "//hal/blocking",
+        "//hal/blocking/spi_filter",
         "//services/orchestrator/capabilities:orchestrator_capabilities",
     ],
 )

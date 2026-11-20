@@ -129,6 +129,7 @@ platform decides which id maps to which physical device.
 | `VerificationFailed(ComponentId)` | platform → core | The eRoT-side check failed: image rejected. |
 | `ComponentReady(ComponentId)` | platform → core | An `Active` component's integrated iRoT has finished its local verification and the component is operational (e.g. MCTP channel established). |
 | `Timeout(ComponentId)` | platform → core | The platform's watchdog fired: the named `Active` component did not deliver `ComponentReady` within the platform-policy window. The platform arms the watchdog after emitting `ReleaseReset` and cancels it on `ComponentReady`. Treated as a verification failure for recovery purposes. |
+| `FlashTampered(ComponentId)` | platform → core | The component's flash guard blocked a write into a protected span while it was running. Handled exactly like `CorruptionDetected`; produced only under the board's `ViolationPolicy::Recover`. See [Flash guarding](./orchestrator-platform.md#flash-guarding). |
 
 ### Effects the core emits for verification work
 
@@ -136,7 +137,8 @@ platform decides which id maps to which physical device.
 |---|---|
 | `ReadFirmware(ComponentId)` | Ask the platform to read the component's firmware image from eRoT-controlled flash. |
 | `VerifyFirmware(ComponentId)` | Ask the platform to verify the image against the RIM/PFM. The platform responds with `VerificationPassed` or `VerificationFailed`. |
-| `ReleaseReset(ComponentId)` | Release the named component from reset. Emitted only after `VerificationPassed`. |
+| `ArmFlashGuard(ComponentId)` | Arm the flash guard in front of the component's flash with the rules for its verified image. Emitted immediately before every `ReleaseReset` of the same component; a no-op for a component with no guard. |
+| `ReleaseReset(ComponentId)` | Release the named component from reset. Emitted only after `VerificationPassed`, and only after `ArmFlashGuard`. |
 
 These are descriptions, not actions. The platform's `Platform::execute` carries
 them out; the core never touches hardware.
@@ -421,6 +423,13 @@ policy deployments configure.
   `SupervisingPlatform` superstate, not part of the boot-time verification chain.
 - **Firmware update verification** (`AuthenticateUpdate`): handled in the
   `Updating` state, distinct from boot-time chain verification.
+- **Where an update is staged when the device's flash sits behind a
+  filter**: `StageUpdate` runs in `Updating` while the device is live. If the
+  staging slot is in that flash, the RoT must own the bus to write it, which
+  means holding the device (ASPEED's PFR firmware does every update with the
+  host held for this reason). Whether the orchestrator holds the device for
+  staging or stages into RoT-local storage is an update-flow decision, not
+  one this model or the flash guard makes.
 - **Multiple intermediate boot-progress checkpoints per component**: the CSA
   architecture allows platform policy to require multiple intermediate
   readiness signals before a component is considered fully booted. This model

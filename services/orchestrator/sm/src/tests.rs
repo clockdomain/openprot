@@ -84,9 +84,11 @@ fn cold_boot_walks_chain_in_order() {
         std::vec![
             Effect::ReadFirmware(C0),
             Effect::VerifyFirmware(C0),
+            Effect::ArmFlashGuard(C0),
             Effect::ReleaseReset(C0),
             Effect::ReadFirmware(C1),
             Effect::VerifyFirmware(C1),
+            Effect::ArmFlashGuard(C1),
             Effect::ReleaseReset(C1),
         ],
     );
@@ -1853,6 +1855,80 @@ fn corruption_in_updating_triggers_recovery() {
     assert!(effects.contains(&Effect::RecoverComponent { id: C0, attempt: 0 }));
 }
 
+/// A blocked write into protected flash is evidence, not noise: `FlashTampered`
+/// takes the same path as `CorruptionDetected` — a `Required` component enters
+/// recovery, a gating policy gates it.
+#[test]
+fn flash_tampered_is_handled_like_corruption() {
+    let (effects, state) = drive(
+        passive_required(&[C0, C1]),
+        &[
+            BOOT,
+            Event::VerificationPassed(C0),
+            Event::VerificationPassed(C1), // → Ready
+            Event::FlashTampered(C1),
+        ],
+    );
+    assert_eq!(state, State::Recovering(C1));
+    assert!(effects.contains(&Effect::RecoverComponent { id: C1, attempt: 0 }));
+
+    let (effects, state) = drive(
+        chain(&[
+            (C0, ComponentAttrs::passive_required()),
+            (C1, ComponentAttrs::passive_isolable()),
+        ]),
+        &[
+            BOOT,
+            Event::VerificationPassed(C0),
+            Event::VerificationPassed(C1),
+            Event::FlashTampered(C1),
+        ],
+    );
+    assert_eq!(state, State::Ready);
+    let tail = &effects[effects.len() - 2..];
+    assert_eq!(tail, &[Effect::AssertReset(C1), Effect::ReportIsolated(C1)]);
+}
+
+/// `FlashTampered` reaches the walking states too, and moves the cursor off a
+/// gated component the way corruption does.
+#[test]
+fn flash_tampered_during_the_walk_gates_and_advances() {
+    let (effects, state) = drive(
+        chain(&[
+            (C0, ComponentAttrs::passive_isolable()),
+            (C1, ComponentAttrs::passive_required()),
+        ]),
+        &[
+            BOOT,
+            Event::VerificationPassed(C0), // C0 live, C1 under verification
+            Event::FlashTampered(C0),
+            Event::VerificationPassed(C1),
+        ],
+    );
+    assert_eq!(state, State::Ready);
+    assert!(effects.contains(&Effect::AssertReset(C0)));
+    assert!(effects.contains(&Effect::ReportIsolated(C0)));
+    assert!(effects.contains(&Effect::ReleaseReset(C1)));
+}
+
+/// A tamper report for a component outside the chain is dropped at the
+/// dispatch boundary like every other id-carrying event.
+#[test]
+fn flash_tampered_out_of_chain_id_is_dropped() {
+    let (effects, state) = drive(
+        passive_required(&[C0]),
+        &[
+            BOOT,
+            Event::VerificationPassed(C0),
+            Event::FlashTampered(C3),
+        ],
+    );
+    assert_eq!(state, State::Ready);
+    assert!(!effects
+        .iter()
+        .any(|e| matches!(e, Effect::RecoverComponent { .. })));
+}
+
 /// Concurrent faults: corruption of a *different* component arriving while the
 /// machine is already in `Recovering` re-targets recovery at the new component.
 /// `Recovering` is a supervised state, so `CorruptionDetected` falls through to
@@ -2181,10 +2257,11 @@ fn speculative_read_effects_are_emitted_together() {
         effects.push(e);
         Ok(None)
     });
-    // All three effects emitted in the same handler, before ComponentReady.
+    // All four effects emitted in the same handler, before ComponentReady.
     assert_eq!(
         effects,
         std::vec![
+            Effect::ArmFlashGuard(C0),
             Effect::ReleaseReset(C0),
             Effect::ReadFirmware(C1),
             Effect::VerifyFirmware(C1),
@@ -2209,6 +2286,7 @@ fn single_active_chain_goes_directly_to_ready() {
         std::vec![
             Effect::ReadFirmware(C0),
             Effect::VerifyFirmware(C0),
+            Effect::ArmFlashGuard(C0),
             Effect::ReleaseReset(C0),
         ],
     );
@@ -2602,7 +2680,7 @@ fn random_chain(rng: &mut SplitMix64) -> heapless::Vec<(ComponentId, ComponentAt
 /// Build one random event over the given id palette. Id-less events ignore it.
 fn random_event(rng: &mut SplitMix64, ids: &[ComponentId]) -> Event {
     let id = ids[rng.below(ids.len() as u32) as usize];
-    match rng.below(16) {
+    match rng.below(17) {
         0 => Event::VerificationPassed(id),
         1 => Event::VerificationFailed(id),
         2 => Event::ComponentReady(id),
@@ -2635,6 +2713,7 @@ fn random_event(rng: &mut SplitMix64, ids: &[ComponentId]) -> Event {
         12 => Event::RecoveryFailed,
         13 => Event::CommitTimeout,
         14 => Event::RecoveryUnavailable(id),
+        15 => Event::FlashTampered(id),
         _ => Event::EffectFailed,
     }
 }
@@ -2798,6 +2877,10 @@ fn property_verify_before_release_holds_under_random_sequences() {
         // INV8: verify-before-release. A component starts held; AssertReset
         // and RecoverComponent re-hold it; VerifyFirmware clears it for release.
         let mut verified = [false; CAPACITY];
+        // Arm-before-release: the effect directly before every
+        // `ReleaseReset(id)` is `ArmFlashGuard(id)`, so the filter is
+        // enforcing before the device's first fetch.
+        let mut previous: Option<Effect> = None;
 
         for effect in trace {
             match effect {
@@ -2812,9 +2895,15 @@ fn property_verify_before_release_holds_under_random_sequences() {
                         verified[id.get() as usize],
                         "seed {seed}: released {id:?} without a verify since its last hold",
                     );
+                    assert_eq!(
+                        previous,
+                        Some(Effect::ArmFlashGuard(*id)),
+                        "seed {seed}: released {id:?} without arming its flash guard first",
+                    );
                 }
                 _ => {}
             }
+            previous = Some(*effect);
         }
     }
 }
@@ -2853,9 +2942,11 @@ fn returned_verdicts_settle_in_one_dispatch() {
         std::vec![
             Effect::ReadFirmware(C0),
             Effect::VerifyFirmware(C0),
+            Effect::ArmFlashGuard(C0),
             Effect::ReleaseReset(C0),
             Effect::ReadFirmware(C1),
             Effect::VerifyFirmware(C1),
+            Effect::ArmFlashGuard(C1),
             Effect::ReleaseReset(C1),
         ],
     );

@@ -4,8 +4,9 @@
 //! HAL-backed adapters for the Boot Orchestrator capability traits.
 //!
 //! Each type here binds an orchestrator-facing seam to a HAL-blocking trait:
-//! [`HalBootControl`] drives `BootControl` over a `ResetControl` line, and
-//! [`GpioBootMonitor`] reads a `GpioPort` input line into a `BootStatus`.
+//! [`HalBootControl`] drives `BootControl` over a `ResetControl` line,
+//! [`GpioBootMonitor`] reads a `GpioPort` input line into a `BootStatus`, and
+//! [`HalFlashGuard`] arms a `FlashGuard` over the `hal_spi_filter` traits.
 //! Adapters live in this crate — not in the leaf
 //! `orchestrator-capabilities` — so that depending on a capability contract
 //! never pulls in the HAL. A transport-backed adapter belongs in its own crate
@@ -15,6 +16,8 @@
 
 mod gpio_boot_monitor;
 mod hal_boot_control;
+mod hal_flash_guard;
 
 pub use gpio_boot_monitor::{GpioBootMonitor, GpioCause, MonitorError};
 pub use hal_boot_control::{BootError, HalBootControl};
+pub use hal_flash_guard::{GuardError, GuardWiring, HalFlashGuard};

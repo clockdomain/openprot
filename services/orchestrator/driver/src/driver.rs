@@ -9,9 +9,13 @@ use openprot_orchestrator_sm::{
 };
 
 use crate::board::{
-    Board, BoardCapabilities, ImageSource, Report, ReportSink, SvnFloorBinding, Verdict, Verifier,
+    Board, BoardCapabilities, GuardBinding, ImageSource, RegionSource, Report, ReportSink,
+    SvnFloorBinding, Verdict, Verifier, ViolationPolicy,
 };
-use orchestrator_capabilities::{BootControl, BootWatch, FailureCause, Svn, SvnFloor, WalkVerdict};
+use orchestrator_capabilities::{
+    BootControl, BootWatch, FailureCause, FlashGuard, GuardRules, Owner, Svn, SvnFloor, Violation,
+    WalkVerdict,
+};
 
 /// Why the driver could not carry out an effect.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -32,6 +36,12 @@ pub enum DriverError {
     NoVerifiedImage,
     /// The component's SVN floor could not be advanced.
     SvnFloorFault,
+    /// The component's rules come from its manifest, but the verifier has no
+    /// authenticated image on record to take them from; fail closed.
+    GuardRulesUnavailable,
+    /// The component's flash guard could not be armed, could not hand over
+    /// the bus, or could not be read.
+    FlashGuardFault,
 }
 
 impl core::fmt::Display for DriverError {
@@ -44,6 +54,10 @@ impl core::fmt::Display for DriverError {
             DriverError::BootControlFault => "boot control could not actuate the reset",
             DriverError::NoVerifiedImage => "no verified image to commit the floor to",
             DriverError::SvnFloorFault => "svn floor could not be advanced",
+            DriverError::GuardRulesUnavailable => {
+                "no authenticated manifest to take the flash guard rules from"
+            }
+            DriverError::FlashGuardFault => "flash guard could not be armed, switched or read",
         })
     }
 }
@@ -86,6 +100,13 @@ impl<B: BoardCapabilities, const N: usize> PlatformDriver<B, N> {
     #[cfg(test)]
     pub(crate) fn board(&self) -> &Board<B, N> {
         &self.board
+    }
+
+    /// Mutable twin of [`board`](Self::board), for a test that scripts a
+    /// capability after it moved into the driver.
+    #[cfg(test)]
+    pub(crate) fn board_mut(&mut self) -> &mut Board<B, N> {
+        &mut self.board
     }
 
     /// `id`'s image source. Takes the array rather than `&mut self` so the
@@ -159,11 +180,62 @@ impl<B: BoardCapabilities, const N: usize> PlatformDriver<B, N> {
             .ok_or(DriverError::UnknownComponent)
     }
 
+    /// Arm `id`'s flash guard with the rules for its verified image: the
+    /// table's spans, or the spans the verifier read from the manifest.
+    /// A component with no guard is a no-op, as the effect's contract says.
+    /// `Ok` means the guard reports the rules in force and read back; a
+    /// guard that cannot be proven armed fails the effect, and the SM never
+    /// releases a device behind it.
+    pub fn arm_flash_guard(&mut self, id: ComponentId) -> Result<(), DriverError> {
+        let Board {
+            flash_guards,
+            verifier,
+            ..
+        } = &mut self.board;
+        let binding = flash_guards
+            .get_mut(id.get() as usize)
+            .ok_or(DriverError::UnknownComponent)?;
+        let GuardBinding::Guarded { guard, regions, .. } = binding else {
+            return Ok(());
+        };
+        let rules = match *regions {
+            RegionSource::Table(writable) => GuardRules {
+                writable,
+                unreadable: &[],
+            },
+            RegionSource::Manifest => verifier
+                .guard_rules(id)
+                .ok_or(DriverError::GuardRulesUnavailable)?,
+        };
+        guard.arm(&rules).map_err(|_| DriverError::FlashGuardFault)
+    }
+
+    /// Hand `id`'s flash to `owner`, if a guard fronts it.
+    fn hand_bus(&mut self, id: ComponentId, owner: Owner) -> Result<(), DriverError> {
+        match self
+            .board
+            .flash_guards
+            .get_mut(id.get() as usize)
+            .ok_or(DriverError::UnknownComponent)?
+        {
+            GuardBinding::Unguarded => Ok(()),
+            GuardBinding::Guarded { guard, .. } => guard
+                .connect(owner)
+                .map_err(|_| DriverError::FlashGuardFault),
+        }
+    }
+
     /// Release `id` from reset and arm its boot walk;
     /// [`poll_boot_walks`](Self::poll_boot_walks) feeds the verdict back
     /// as `ComponentReady(id)`/`Booted(id)`/`BootFailed { id, .. }`. Arms on every
     /// release: a retry re-release starts a fresh walk.
+    ///
+    /// The bus is handed to the device before its reset is released. The
+    /// guard has been filtering since `ArmFlashGuard`, so there is no window
+    /// in which the device sees an unfiltered bus, and no fetch from a flash
+    /// the RoT still owns.
     pub fn release_reset(&mut self, id: ComponentId) -> Result<(), DriverError> {
+        self.hand_bus(id, Owner::Device)?;
         self.boot_control(id)?
             .release()
             .map_err(|_| DriverError::BootControlFault)?;
@@ -178,12 +250,53 @@ impl<B: BoardCapabilities, const N: usize> PlatformDriver<B, N> {
     /// verification and the recovery re-walk depend on it. Also stops the
     /// boot walk: a held device produces no boot signal, so polling it
     /// could only yield a stale `BootFailed`.
+    ///
+    /// Once the device is held, its flash goes back to the RoT: the
+    /// at-rest verification and any recovery write that follow run on the
+    /// RoT's own controller.
     pub fn assert_reset(&mut self, id: ComponentId) -> Result<(), DriverError> {
         self.boot_control(id)?
             .hold_in_reset()
             .map_err(|_| DriverError::BootControlFault)?;
         self.watching[id.get() as usize] = false;
-        Ok(())
+        self.hand_bus(id, Owner::Rot)
+    }
+
+    /// Drains every guard's violation log, handing each entry to the report
+    /// sink, and returns the first blocked write of a component whose policy
+    /// is [`ViolationPolicy::Recover`] as `FlashTampered(id)`. Blocked reads
+    /// and opcodes are report-only under both policies. Returns at the first
+    /// event; drain by calling until `Ok(None)`.
+    ///
+    /// A guard that cannot be read is a fault, not an empty log: the caller
+    /// decides whether a blind guard is tolerable.
+    pub fn poll_flash_guards(&mut self) -> Result<Option<Event>, DriverError> {
+        let Board {
+            flash_guards,
+            report_sink,
+            ..
+        } = &mut self.board;
+        for (idx, binding) in flash_guards.iter_mut().enumerate() {
+            let GuardBinding::Guarded {
+                guard, violations, ..
+            } = binding
+            else {
+                continue;
+            };
+            let id: ComponentId = (idx as u8).into();
+            while let Some(violation) = guard
+                .take_violation()
+                .map_err(|_| DriverError::FlashGuardFault)?
+            {
+                report_sink.report(Report::FlashViolation { id, violation });
+                if *violations == ViolationPolicy::Recover
+                    && matches!(violation, Violation::BlockedWrite(_))
+                {
+                    return Ok(Some(Event::FlashTampered(id)));
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// Polls every watched walk at `now_millis` and returns the first
@@ -276,6 +389,7 @@ impl<B: BoardCapabilities, const N: usize> Platform for PlatformDriver<B, N> {
         match effect {
             Effect::ReadFirmware(id) => self.stage_firmware(id).map(|_| None),
             Effect::VerifyFirmware(id) => self.verify_firmware(id).map(Some),
+            Effect::ArmFlashGuard(id) => self.arm_flash_guard(id).map(|_| None),
             Effect::ReleaseReset(id) => self.release_reset(id).map(|_| None),
             Effect::AssertReset(id) => self.assert_reset(id).map(|_| None),
             Effect::CommitSvnFloor(id) => self.commit_svn_floor(id).map(|_| None),

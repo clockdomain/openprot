@@ -12,12 +12,12 @@ stateDiagram-v2
     PowerOnReset --> Locked             : PowerGood(Unprovisioned)
     PowerOnReset --> Locked             : PowerGood(SelfVerificationFailed)
 
-    PreSupervision --> PreSupervision : VerificationPassed [more, Passive]<br/>/ ReleaseReset · ReadFirmware · VerifyFirmware
-    PreSupervision --> AwaitingReady     : VerificationPassed [more, Active]<br/>/ ReleaseReset · ReadFirmware · VerifyFirmware
-    PreSupervision --> Ready             : VerificationPassed [chain done]<br/>/ ReleaseReset
+    PreSupervision --> PreSupervision : VerificationPassed [more, Passive]<br/>/ ArmFlashGuard · ReleaseReset · ReadFirmware · VerifyFirmware
+    PreSupervision --> AwaitingReady     : VerificationPassed [more, Active]<br/>/ ArmFlashGuard · ReleaseReset · ReadFirmware · VerifyFirmware
+    PreSupervision --> Ready             : VerificationPassed [chain done]<br/>/ ArmFlashGuard · ReleaseReset
     PreSupervision --> Recovering        : VerificationFailed (any policy)<br/>/ RestoreGoldenImage
 
-    AwaitingReady --> AwaitingReady : VerificationPassed [more]<br/>/ ReleaseReset · ReadFirmware · VerifyFirmware
+    AwaitingReady --> AwaitingReady : VerificationPassed [more]<br/>/ ArmFlashGuard · ReleaseReset · ReadFirmware · VerifyFirmware
     AwaitingReady --> Ready         : ComponentReady [chain done or cursor past end]
     AwaitingReady --> AwaitingReady : ComponentReady [more]
     AwaitingReady --> Recovering    : VerificationFailed (any policy)<br/>/ RestoreGoldenImage
@@ -109,9 +109,9 @@ here — they persist across re-walks so exhausted components are not re-verifie
 
 | Event | Guard | Effects | Next state |
 |---|---|---|---|
-| `VerificationPassed(id)` | more, current `Passive` | `ReleaseReset` · `ReadFirmware(next)` · `VerifyFirmware(next)` | `Handled` (cursor ++) |
-| `VerificationPassed(id)` | more, current `Active` | `ReleaseReset` · `ReadFirmware(next)` · `VerifyFirmware(next)` | `AwaitingReady(Some(id))` |
-| `VerificationPassed(id)` | chain done | `ReleaseReset(id)` | `Ready` |
+| `VerificationPassed(id)` | more, current `Passive` | `ArmFlashGuard` · `ReleaseReset` · `ReadFirmware(next)` · `VerifyFirmware(next)` | `Handled` (cursor ++) |
+| `VerificationPassed(id)` | more, current `Active` | `ArmFlashGuard` · `ReleaseReset` · `ReadFirmware(next)` · `VerifyFirmware(next)` | `AwaitingReady(Some(id))` |
+| `VerificationPassed(id)` | chain done | `ArmFlashGuard(id)` · `ReleaseReset(id)` | `Ready` |
 | `VerificationFailed(id)` | — | — | `Recovering(id)` — recovery is attempted first, regardless of the component's recovery-failure policy |
 | `CorruptionDetected(id)` | `Required`/unknown | `RestoreGoldenImage` | `Recovering(id)` |
 | `CorruptionDetected(id)` | `Isolable`/`Cascading` | `AssertReset` · `ReportIsolated` | `Handled` (component gated; walk continues) |
@@ -152,8 +152,8 @@ transition.
 | `ComponentReady(id)` | `id != awaited` | — | `Handled` (stale/spurious — ignore, INV9) |
 | `ComponentReady(id)` | `id == awaited`, cursor in bounds | — | `AwaitingReady(None)` (readiness satisfied; walk not yet done) |
 | `ComponentReady(id)` | `id == awaited`, cursor past end | — | `Ready` |
-| `VerificationPassed(id)` | more | `ReleaseReset` · `ReadFirmware(next)` · `VerifyFirmware(next)` | `Handled` (cursor ++) |
-| `VerificationPassed(id)` | chain done | `ReleaseReset(id)` | `Ready` |
+| `VerificationPassed(id)` | more | `ArmFlashGuard` · `ReleaseReset` · `ReadFirmware(next)` · `VerifyFirmware(next)` | `Handled` (cursor ++) |
+| `VerificationPassed(id)` | chain done | `ArmFlashGuard(id)` · `ReleaseReset(id)` | `Ready` |
 | `Timeout(id)` | `id == awaited` | — | `Recovering(id)` |
 | `Timeout(id)` | `id != awaited` | — | `Handled` (stale — ignore) |
 | `VerificationFailed(id)` | — | — | `Recovering(id)` — recovery attempted first |
@@ -323,6 +323,11 @@ all components in reset permanently.
 ## Superstate — `SupervisingPlatform`
 
 `Ready`, `Updating`, `Recovering`, and `AwaitingReady` share this superstate.
+`FlashTampered(id)` (the flash guard blocked a write into a protected span)
+takes every `CorruptionDetected(id)` row in this document: the same arms match
+both events, so the two can never diverge. It is listed separately in the
+event vocabulary only so reports can tell the causes apart.
+
 When a leaf state returns `Outcome::Super`, the engine calls the superstate
 handler (`handle_supervising`).
 
@@ -385,6 +390,7 @@ copies spread across per-state tables.
 |---|---|---|
 | INV6 — attestation answered in any `SupervisingPlatform` state, no transition | `AttestationChallenge → SignAttestation`, `Handled` (one row in `SupervisingPlatform`) | Read one row + confirm four states link to `SupervisingPlatform` |
 | INV5 — corruption triggers recovery from any `SupervisingPlatform` state | `CorruptionDetected → Recovering` (one row in `SupervisingPlatform`) | Read one row + confirm four states link to `SupervisingPlatform` |
+| Arm before release — the effect directly before every `ReleaseReset(id)` is `ArmFlashGuard(id)` | The two `VerificationPassed` release sites (`PreSupervision`, `AwaitingReady`) | `property_verify_before_release_holds_under_random_sequences` scans every trace for it |
 
 A state that forgets to link, or handles the event itself, silently drops out of
 the rule — so the four links do matter. The win is that the safe thing is the

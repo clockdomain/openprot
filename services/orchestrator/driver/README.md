@@ -30,7 +30,14 @@ loop {
 }
 ```
 
-Implemented executors: `ReadFirmware`, `VerifyFirmware`, `ReleaseReset`
-(arms the boot walk), `AssertReset` (stops it). Everything else fails closed
-until its pillar lands (recovery, update path, attestation, reporting,
-lockdown latch).
+Flash-guard violations are the other asynchronous read. `poll_flash_guards`
+drains every guard's log into the report sink and returns `FlashTampered(id)`
+for a blocked write under `ViolationPolicy::Recover`; call it until `Ok(None)`
+alongside the boot-walk poll.
+
+Implemented executors: `ReadFirmware`, `VerifyFirmware`, `ArmFlashGuard`
+(table or manifest rules into the component's `FlashGuard`; a no-op for an
+unguarded component), `ReleaseReset` (hands the bus to the device, then arms
+the boot walk), `AssertReset` (stops the walk, hands the bus back to the RoT),
+`CommitSvnFloor`, and the reports. Everything else fails closed until its
+pillar lands (recovery, update path, attestation, lockdown latch).

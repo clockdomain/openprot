@@ -4,5 +4,8 @@
 # orchestrator-capabilities
 
 Device-facing capability traits for the Boot Orchestrator: `BootControl`
-(actuation — hold/release reset) and `BootMonitor` (observation — read boot
-liveness). A dependency-free leaf; adapters implement them elsewhere.
+(actuation — hold/release reset), `BootMonitor` (observation — read boot
+liveness) and `FlashGuard` (the rules a SPI filter enforces on a device's
+flash, and who owns the bus to it; see
+`docs/src/design/orchestrator/orchestrator-platform.md`). A dependency-free leaf;
+adapters implement them elsewhere.

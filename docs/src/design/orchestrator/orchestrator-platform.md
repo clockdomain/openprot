@@ -152,6 +152,112 @@ pattern as they land. Five rules govern how the orchestrator relies on them:
   just becomes a checkpoint timeout, and the boot-complete GPIO line
   remains a transport-free liveness path.
 
+## Flash guarding
+
+The "protection survives its crash" rule above is implemented by one
+capability, one adapter, two table entries and one effect/event pair. The
+HAL contract the adapter drives, and the four chips it was derived from, are
+on the [SPI flash filter](../spi-filter.md) page; this section is the
+orchestrator's side of it.
+
+- **`FlashGuard`** (`services/orchestrator/capabilities`) is the capability
+  the reducer's `ArmFlashGuard` effect executes against: `arm(rules)`,
+  `connect(owner)`, `take_violation()`. Like its peers it is bounded only by
+  `core::error::Error`, so a mock or an IPC proxy implements it without a
+  HAL. `arm` is deliberately coarser than the HAL: "make these rules true",
+  not "set this bit", so the reducer and its tests never see opcodes,
+  privilege tables or lock registers.
+- **`HalFlashGuard`** (`services/orchestrator/adapters/hal`) implements it
+  over the `hal_spi_filter` traits from a `GuardWiring` the board declares:
+  the opcodes, the chip's filtering mode, the two bus connections, the lock
+  targets its lock policy maps to, and how the chip's log record reads as a
+  `Violation`. It is the only code that knows a filter has slots, tables and
+  lock bits.
+- **`FlashGuardConfig`** (`services/orchestrator/config`) is the table
+  entry: which filter, which opcodes, where the writable spans come from
+  (`RegionSource::Table` or `Manifest`), `FilterLockPolicy`, and
+  `ViolationPolicy`. The rationale for each policy's default is on the enum.
+  The driver binds one `GuardBinding` per component from it.
+- **`Effect::ArmFlashGuard(id)`** is emitted directly before every
+  `ReleaseReset(id)`; a component with no guard executes it as a no-op.
+  **`Event::FlashTampered(id)`** is a blocked write under
+  `ViolationPolicy::Recover` and takes every `CorruptionDetected(id)` arm.
+
+```mermaid
+flowchart LR
+    SM["State machine<br/>ArmFlashGuard · ReleaseReset"]
+    CAP["FlashGuard<br/>(capability)"]
+    AD["HalFlashGuard<br/>(adapter)"]
+    HAL["hal_spi_filter<br/>OpcodeRules · RegionRules · Lockable · BusIsolation"]
+    HW["SPI monitor<br/>target/&lt;board&gt;"]
+    TABLE["devices.rs<br/>FlashGuardConfig"]
+    SM --> CAP --> AD --> HAL --> HW
+    TABLE -.-> AD
+```
+
+### The boot sequence, with actors
+
+```mermaid
+sequenceDiagram
+    participant SM as State machine
+    participant D as Platform driver
+    participant G as HalFlashGuard
+    participant BC as BootControl
+
+    Note over SM,BC: PowerOnReset: every device held, every filter connected to the RoT (board bring-up)
+    SM->>D: ReadFirmware(id) · VerifyFirmware(id)
+    D-->>SM: VerificationPassed(id)  [verifier keeps the manifest spans if RegionSource::Manifest]
+    SM->>D: ArmFlashGuard(id)
+    D->>G: arm(rules): connect(Rot) · allow list · regions · filtering mode · locks · read back
+    SM->>D: ReleaseReset(id)
+    D->>G: connect(Device)
+    D->>BC: release(id)
+    Note over G: Filtering, in hardware, until the next hold
+    G-->>D: violation (poll_flash_guards)
+    D-->>SM: FlashTampered(id)  [ViolationPolicy::Recover, blocked write only]
+    SM->>D: AssertReset(id)
+    D->>BC: hold_in_reset(id)
+    D->>G: connect(Rot)
+```
+
+1. **Hold.** Board bring-up leaves every managed device in reset and every
+   filter connected to the RoT. The RoT reads and verifies the image through
+   the flash HAL on its own controller; the filter is not in that path.
+2. **Configure.** On `ArmFlashGuard(id)` the adapter loads the opcode list
+   and the writable spans and switches the chip to filtering. The spans come
+   from the table, or from the manifest the verifier just authenticated, so
+   a new image with a new layout is armed correctly with no special case.
+   This runs on every verify, not on every host reset: the rules can only
+   legitimately change when the verified image changes.
+3. **Lock.** Per `FilterLockPolicy`. `CommandsOnly` locks the allow list and
+   the control registers through `Lockable::lock`; `All` freezes the region
+   tables too, once, and later arms must present the same rules or fail.
+4. **Release.** `connect(Device)`, then `BootControl::release`. The filter
+   has been enforcing since step 2, so there is no window between the mux
+   switch and the first fetch in which the device sees an unfiltered bus.
+5. **Monitor.** The driver drains violations (`poll_flash_guards`) into the
+   report sink and applies `ViolationPolicy`. A device that resets at
+   runtime is caught by `BootWatch`, enters recovery through `BootFailed`,
+   and is re-verified and re-armed on the way back through
+   `PreSupervision`.
+
+A failed arm, like any failed effect, becomes `EffectFailed` and latches
+`Locked`: a filter that cannot be proven armed does not get a device released
+behind it. Arming a device that has no guard succeeds and does nothing, so
+one reducer serves boards with and without filters.
+
+### Prior art
+
+The one shipping implementation on the same hardware is ASPEED's PFR
+firmware for the AST1060. It arms the filter from the manifest on every host
+reset, never sets the lock bits, and only logs violations. This design
+departs on all three: it locks the command table (the opcode list is a
+property of the flash part), re-arms on verification (the rules follow the
+image), and treats a blocked write as evidence (a device overwriting its own
+firmware is not trusted to keep running). The register-level account of
+ASPEED's sequence, and the questions it leaves for the EVB, are in
+`target/ast10x0/peripherals/spimonitor/README.md`.
+
 ## TODO
 
 - Define the lockdown latch: where it lives, what "locked" gates, and
